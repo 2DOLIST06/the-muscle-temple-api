@@ -1,6 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
-import { PostStatus, SeoEntityType, UserRole } from '@prisma/client';
+import { PostStatus, Prisma, SeoEntityType, UserRole } from '@prisma/client';
 import { z } from 'zod';
 import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
@@ -89,7 +89,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           slug,
           excerpt: body.excerpt,
           contentMarkdown: body.contentMarkdown,
-          contentJson: body.contentJson,
+          contentJson: body.contentJson as Prisma.InputJsonValue | undefined,
           status: body.status,
           publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
@@ -147,7 +147,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           slug: body.slug ? makeSlug(body.slug) : makeSlug(body.title),
           excerpt: body.excerpt,
           contentMarkdown: body.contentMarkdown,
-          contentJson: body.contentJson,
+          contentJson: body.contentJson as Prisma.InputJsonValue | undefined,
           status: body.status,
           publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? existing.publishedAt ?? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
