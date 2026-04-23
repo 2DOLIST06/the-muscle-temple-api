@@ -102,6 +102,9 @@ npm ci && npm run prisma:generate && npm run build
 npm run prisma:deploy && npm run start
 ```
 
+> Si tu utilises Yarn sur Render (`yarn install; yarn build`), c’est aussi compatible:
+> - `yarn build` lance `prisma generate` automatiquement avant `tsc`.
+
 **Health Check Path**:
 ```txt
 /api/health
