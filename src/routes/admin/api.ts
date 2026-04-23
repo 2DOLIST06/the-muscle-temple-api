@@ -1,9 +1,22 @@
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
-import { SeoEntityType, UserRole } from '@prisma/client';
+import { PostStatus, SeoEntityType, UserRole } from '@prisma/client';
+import { z } from 'zod';
 import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
 import { requireAdminAuth, requireRole } from '../../lib/auth.js';
+
+const pageSeoSchema = z.object({
+  title: z.string().max(70).optional(),
+  description: z.string().max(160).optional(),
+  canonicalUrl: z.string().url().optional(),
+  noIndex: z.boolean().optional().default(false),
+  openGraphImageId: z.string().optional()
+});
+
+function uniqueIds(ids: string[]) {
+  return [...new Set(ids.filter(Boolean))];
+}
 
 export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login', async (request, reply) => {
@@ -29,8 +42,8 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     protectedScope.get('/dashboard', async () => {
       const [posts, drafts, published, categories, authors] = await Promise.all([
         fastify.prisma.post.count(),
-        fastify.prisma.post.count({ where: { status: 'DRAFT' } }),
-        fastify.prisma.post.count({ where: { status: 'PUBLISHED' } }),
+        fastify.prisma.post.count({ where: { status: PostStatus.DRAFT } }),
+        fastify.prisma.post.count({ where: { status: PostStatus.PUBLISHED } }),
         fastify.prisma.category.count(),
         fastify.prisma.author.count()
       ]);
@@ -51,7 +64,14 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
 
     protectedScope.get('/posts', async () => {
       const posts = await fastify.prisma.post.findMany({
-        include: { author: true, category: true, seoMetadata: true, postTags: { include: { tag: true } } },
+        include: {
+          author: true,
+          category: true,
+          coverImage: true,
+          seoMetadata: true,
+          postTags: { include: { tag: true } },
+          relatedFrom: { include: { targetPost: { select: { id: true, title: true, slug: true } } } }
+        },
         orderBy: { updatedAt: 'desc' }
       });
       return { data: posts };
@@ -60,6 +80,8 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     protectedScope.post('/posts', async (request) => {
       const body = postSchema.parse(request.body);
       const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
+      const tagIds = uniqueIds(body.tagIds);
+      const relatedPostIds = uniqueIds(body.relatedPostIds);
 
       const post = await fastify.prisma.post.create({
         data: {
@@ -69,19 +91,25 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           contentMarkdown: body.contentMarkdown,
           contentJson: body.contentJson,
           status: body.status,
-          publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === 'PUBLISHED' ? new Date() : null,
+          publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
           authorId: body.authorId,
           categoryId: body.categoryId ?? undefined,
-          coverImageId: body.coverImageId ?? undefined,
-          postTags: { createMany: { data: body.tagIds.map((tagId) => ({ tagId })) } }
-        },
-        include: { postTags: true }
+          coverImageId: body.coverImageId ?? undefined
+        }
       });
 
-      if (body.relatedPostIds.length) {
+      if (tagIds.length) {
+        await fastify.prisma.postTag.createMany({
+          data: tagIds.map((tagId) => ({ postId: post.id, tagId })),
+          skipDuplicates: true
+        });
+      }
+
+      const filteredRelatedPostIds = relatedPostIds.filter((relatedId) => relatedId !== post.id);
+      if (filteredRelatedPostIds.length) {
         await fastify.prisma.postRelation.createMany({
-          data: body.relatedPostIds.map((targetPostId) => ({ sourcePostId: post.id, targetPostId })),
+          data: filteredRelatedPostIds.map((targetPostId) => ({ sourcePostId: post.id, targetPostId })),
           skipDuplicates: true
         });
       }
@@ -109,6 +137,9 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = await fastify.prisma.post.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ message: 'Post not found' });
 
+      const tagIds = uniqueIds(body.tagIds);
+      const relatedPostIds = uniqueIds(body.relatedPostIds).filter((relatedId) => relatedId !== id);
+
       const updated = await fastify.prisma.post.update({
         where: { id },
         data: {
@@ -118,7 +149,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           contentMarkdown: body.contentMarkdown,
           contentJson: body.contentJson,
           status: body.status,
-          publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === 'PUBLISHED' ? existing.publishedAt ?? new Date() : null,
+          publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? existing.publishedAt ?? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
           authorId: body.authorId,
           categoryId: body.categoryId ?? undefined,
@@ -127,14 +158,17 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       await fastify.prisma.postTag.deleteMany({ where: { postId: id } });
-      if (body.tagIds.length) {
-        await fastify.prisma.postTag.createMany({ data: body.tagIds.map((tagId) => ({ postId: id, tagId })) });
+      if (tagIds.length) {
+        await fastify.prisma.postTag.createMany({
+          data: tagIds.map((tagId) => ({ postId: id, tagId })),
+          skipDuplicates: true
+        });
       }
 
       await fastify.prisma.postRelation.deleteMany({ where: { sourcePostId: id } });
-      if (body.relatedPostIds.length) {
+      if (relatedPostIds.length) {
         await fastify.prisma.postRelation.createMany({
-          data: body.relatedPostIds.map((targetPostId) => ({ sourcePostId: id, targetPostId })),
+          data: relatedPostIds.map((targetPostId) => ({ sourcePostId: id, targetPostId })),
           skipDuplicates: true
         });
       }
@@ -173,7 +207,9 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     protectedScope.get('/categories', async () => ({ data: await fastify.prisma.category.findMany({ include: { seoMetadata: true } }) }));
     protectedScope.post('/categories', async (request) => {
       const body = categorySchema.parse(request.body);
-      const category = await fastify.prisma.category.create({ data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name), description: body.description } });
+      const category = await fastify.prisma.category.create({
+        data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name), description: body.description }
+      });
       if (body.seo) {
         await fastify.prisma.seoMetadata.create({
           data: {
@@ -193,7 +229,10 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     protectedScope.put('/categories/:id', async (request) => {
       const { id } = request.params as { id: string };
       const body = categorySchema.parse(request.body);
-      const category = await fastify.prisma.category.update({ where: { id }, data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name), description: body.description } });
+      const category = await fastify.prisma.category.update({
+        where: { id },
+        data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name), description: body.description }
+      });
       if (body.seo) {
         await fastify.prisma.seoMetadata.upsert({
           where: { categoryId: id },
@@ -217,12 +256,29 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return { data: category };
     });
-    protectedScope.delete('/categories/:id', async (request) => ({ data: await fastify.prisma.category.delete({ where: { id: (request.params as { id: string }).id } }) }));
+    protectedScope.delete('/categories/:id', async (request, reply) => {
+      try {
+        return {
+          data: await fastify.prisma.category.delete({ where: { id: (request.params as { id: string }).id } })
+        };
+      } catch {
+        return reply.code(409).send({ message: 'Impossible de supprimer cette catégorie (posts liés).' });
+      }
+    });
 
-    protectedScope.get('/authors', async () => ({ data: await fastify.prisma.author.findMany({ include: { seoMetadata: true, avatarMedia: true } }) }));
+    protectedScope.get('/authors', async () => ({
+      data: await fastify.prisma.author.findMany({ include: { seoMetadata: true, avatarMedia: true } })
+    }));
     protectedScope.post('/authors', async (request) => {
       const body = authorSchema.parse(request.body);
-      const author = await fastify.prisma.author.create({ data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name), bio: body.bio, avatarMediaId: body.avatarMediaId || undefined } });
+      const author = await fastify.prisma.author.create({
+        data: {
+          name: body.name,
+          slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name),
+          bio: body.bio,
+          avatarMediaId: body.avatarMediaId || undefined
+        }
+      });
       if (body.seo) {
         await fastify.prisma.seoMetadata.create({
           data: {
@@ -241,7 +297,15 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     protectedScope.put('/authors/:id', async (request) => {
       const { id } = request.params as { id: string };
       const body = authorSchema.parse(request.body);
-      const author = await fastify.prisma.author.update({ where: { id }, data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name), bio: body.bio, avatarMediaId: body.avatarMediaId || undefined } });
+      const author = await fastify.prisma.author.update({
+        where: { id },
+        data: {
+          name: body.name,
+          slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name),
+          bio: body.bio,
+          avatarMediaId: body.avatarMediaId || undefined
+        }
+      });
       if (body.seo) {
         await fastify.prisma.seoMetadata.upsert({
           where: { authorId: id },
@@ -265,12 +329,22 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return { data: author };
     });
-    protectedScope.delete('/authors/:id', async (request) => ({ data: await fastify.prisma.author.delete({ where: { id: (request.params as { id: string }).id } }) }));
+    protectedScope.delete('/authors/:id', async (request, reply) => {
+      try {
+        return { data: await fastify.prisma.author.delete({ where: { id: (request.params as { id: string }).id } }) };
+      } catch {
+        return reply.code(409).send({ message: 'Impossible de supprimer cet auteur (posts liés).' });
+      }
+    });
 
     protectedScope.get('/tags', async () => ({ data: await fastify.prisma.tag.findMany({ orderBy: { name: 'asc' } }) }));
     protectedScope.post('/tags', async (request) => {
       const body = tagSchema.parse(request.body);
-      return { data: await fastify.prisma.tag.create({ data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name) } }) };
+      return {
+        data: await fastify.prisma.tag.create({
+          data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name) }
+        })
+      };
     });
 
     protectedScope.get('/media', async () => ({ data: await fastify.prisma.media.findMany({ orderBy: { createdAt: 'desc' } }) }));
@@ -281,12 +355,14 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
 
     protectedScope.get('/seo/page/:key', async (request) => {
       const key = (request.params as { key: string }).key;
-      return { data: await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: key }, include: { openGraphImage: true } }) };
+      return {
+        data: await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: key }, include: { openGraphImage: true } })
+      };
     });
 
     protectedScope.put('/seo/page/:key', async (request) => {
       const key = (request.params as { key: string }).key;
-      const body = request.body as { title?: string; description?: string; canonicalUrl?: string; noIndex?: boolean; openGraphImageId?: string };
+      const body = pageSeoSchema.parse(request.body);
       return {
         data: await fastify.prisma.seoMetadata.upsert({
           where: { pageKey: key },

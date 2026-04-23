@@ -73,7 +73,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
     if (!category) return reply.code(404).send({ message: 'Category not found' });
 
     const posts = await fastify.prisma.post.findMany({
-      where: { categoryId: category.id, status: PostStatus.PUBLISHED },
+      where: { categoryId: category.id, status: PostStatus.PUBLISHED, publishedAt: { lte: new Date() } },
       include: { author: true, coverImage: true, seoMetadata: true },
       orderBy: { publishedAt: 'desc' }
     });
@@ -94,7 +94,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
     if (!author) return reply.code(404).send({ message: 'Author not found' });
 
     const posts = await fastify.prisma.post.findMany({
-      where: { authorId: author.id, status: PostStatus.PUBLISHED },
+      where: { authorId: author.id, status: PostStatus.PUBLISHED, publishedAt: { lte: new Date() } },
       include: { category: true, coverImage: true, seoMetadata: true },
       orderBy: { publishedAt: 'desc' }
     });

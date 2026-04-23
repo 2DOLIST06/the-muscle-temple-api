@@ -6,6 +6,7 @@ services:
     rootDir: .
     buildCommand: npm ci && npm run prisma:generate && npm run build
     startCommand: npm run prisma:deploy && npm run start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production

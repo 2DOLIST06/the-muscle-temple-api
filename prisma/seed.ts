@@ -1,7 +1,14 @@
+import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { PrismaClient, PostStatus, UserRole, SeoEntityType } from '@prisma/client';
 
 const prisma = new PrismaClient();
+
+async function getOrCreateMediaByUrl(url: string, altText: string) {
+  const existing = await prisma.media.findFirst({ where: { url } });
+  if (existing) return existing;
+  return prisma.media.create({ data: { url, altText } });
+}
 
 async function main() {
   const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@muscletemple.com';
@@ -14,13 +21,11 @@ async function main() {
     create: { email: adminEmail, passwordHash, role: UserRole.ADMIN, displayName: 'Admin' }
   });
 
-  const media = await prisma.media.create({
-    data: { url: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438', altText: 'Athlete training' }
-  });
+  const media = await getOrCreateMediaByUrl('https://images.unsplash.com/photo-1517836357463-d25dfeac3438', 'Athlete training');
 
   const author = await prisma.author.upsert({
     where: { slug: 'coach-alex' },
-    update: {},
+    update: { avatarMediaId: media.id },
     create: { name: 'Coach Alex', slug: 'coach-alex', bio: 'Coach et expert nutrition.', avatarMediaId: media.id }
   });
 
@@ -38,7 +43,17 @@ async function main() {
 
   const post = await prisma.post.upsert({
     where: { slug: 'programme-prise-de-masse-4-jours' },
-    update: {},
+    update: {
+      title: 'Programme prise de masse sur 4 jours',
+      excerpt: 'Un plan structuré pour progresser durablement.',
+      contentMarkdown: '# Programme prise de masse\n\nContenu initial pour démarrer le blog.',
+      status: PostStatus.PUBLISHED,
+      publishedAt: new Date(),
+      readingTimeMinutes: 7,
+      authorId: author.id,
+      categoryId: category.id,
+      coverImageId: media.id
+    },
     create: {
       title: 'Programme prise de masse sur 4 jours',
       slug: 'programme-prise-de-masse-4-jours',
@@ -61,7 +76,13 @@ async function main() {
 
   await prisma.seoMetadata.upsert({
     where: { postId: post.id },
-    update: {},
+    update: {
+      entityType: SeoEntityType.POST,
+      title: 'Programme prise de masse 4 jours | The Muscle Temple',
+      description: 'Routine complète pour développer la masse musculaire.',
+      noIndex: false,
+      openGraphImageId: media.id
+    },
     create: {
       entityType: SeoEntityType.POST,
       postId: post.id,
@@ -74,7 +95,11 @@ async function main() {
 
   await prisma.seoMetadata.upsert({
     where: { categoryId: category.id },
-    update: {},
+    update: {
+      entityType: SeoEntityType.CATEGORY,
+      title: 'Articles entraînement',
+      description: 'Tous les articles d’entraînement du blog.'
+    },
     create: {
       entityType: SeoEntityType.CATEGORY,
       categoryId: category.id,
@@ -82,6 +107,8 @@ async function main() {
       description: 'Tous les articles d’entraînement du blog.'
     }
   });
+
+  console.log('✅ Seed terminé: admin + contenu de base prêts.');
 }
 
 main()

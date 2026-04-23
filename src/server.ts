@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
@@ -12,7 +13,15 @@ const app = Fastify({ logger: true });
 
 app.decorate('prisma', prisma);
 
-app.register(cors, { origin: env.CORS_ORIGIN });
+app.register(cors, {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (env.corsOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Origin not allowed by CORS'), false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  credentials: true
+});
 app.register(cookie);
 app.register(jwt, { secret: env.JWT_SECRET });
 
