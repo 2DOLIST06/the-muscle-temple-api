@@ -81,8 +81,8 @@ export const adminPanelRoutes: FastifyPluginAsync = async (fastify) => {
       title: f.get('title'), excerpt: f.get('excerpt') || undefined, contentMarkdown: f.get('contentMarkdown'),
       authorId: f.get('authorId'), categoryId: f.get('categoryId') || null, status: f.get('status'),
       readingTimeMinutes: f.get('readingTimeMinutes') ? Number(f.get('readingTimeMinutes')) : null,
-      tagIds: (f.get('tagIds')||'').toString().split(',').map(x=>x.trim()).filter(Boolean),
-      relatedPostIds: (f.get('relatedPostIds')||'').toString().split(',').map(x=>x.trim()).filter(Boolean),
+      tagIds: String(f.get('tagIds') ?? '').split(',').map(function(x){return x.trim();}).filter(Boolean),
+      relatedPostIds: String(f.get('relatedPostIds') ?? '').split(',').map(function(x){return x.trim();}).filter(Boolean),
       seo: { title: f.get('seoTitle') || '', description: f.get('seoDescription') || '', canonicalUrl: f.get('canonicalUrl') || '', noIndex: false }
     };
     const res = await fetch('/admin-api/posts',{method:'POST',headers,body:JSON.stringify(body)});
