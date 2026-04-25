@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
+import { ZodError } from 'zod';
 import { env } from './config/env.js';
 import { prisma } from './db/client.js';
 import { publicRoutes } from './routes/public/index.js';
@@ -28,6 +29,27 @@ app.register(jwt, { secret: env.JWT_SECRET });
 app.register(publicRoutes, { prefix: '/api' });
 app.register(adminApiRoutes, { prefix: '/admin-api' });
 app.register(adminPanelRoutes);
+
+app.setNotFoundHandler((_, reply) => {
+  reply.code(404).send({ message: 'Not found' });
+});
+
+app.setErrorHandler((error, request, reply) => {
+  if (error instanceof ZodError) {
+    const firstIssue = error.issues[0];
+    const issuePath = firstIssue?.path?.length ? `${firstIssue.path.join('.')}: ` : '';
+    reply.code(400).send({ message: `${issuePath}${firstIssue?.message ?? 'Validation error'}` });
+    return;
+  }
+
+  if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+    reply.code(error.statusCode).send({ message: error.message || 'Request error' });
+    return;
+  }
+
+  request.log.error(error);
+  reply.code(500).send({ message: 'Internal server error' });
+});
 
 app.addHook('onClose', async () => {
   await prisma.$disconnect();
