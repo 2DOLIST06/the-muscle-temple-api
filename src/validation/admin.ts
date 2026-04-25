@@ -51,10 +51,10 @@ export const postSchema = z.object({
   status: z.nativeEnum(PostStatus).default(PostStatus.DRAFT),
   publishedAt: z.string().datetime().optional().nullable(),
   readingTimeMinutes: z.coerce.number().int().positive().optional().nullable(),
-  authorId: z.string(),
-  categoryId: z.string().optional().nullable(),
-  coverImageId: z.string().optional().nullable(),
-  tagIds: z.array(z.string()).default([]),
-  relatedPostIds: z.array(z.string()).default([]),
+  authorId: z.string().trim().min(1),
+  categoryId: z.string().trim().optional().nullable(),
+  coverImageId: z.string().trim().optional().nullable(),
+  tagIds: z.array(z.string().trim()).default([]),
+  relatedPostIds: z.array(z.string().trim()).default([]),
   seo: seoSchema.optional()
 });

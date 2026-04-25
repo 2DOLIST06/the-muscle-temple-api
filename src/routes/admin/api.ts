@@ -23,6 +23,16 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function normalizeRequiredId(id: string): string {
+  return id.trim();
+}
+
+function normalizeOptionalId(id?: string | null): string | undefined {
+  if (id == null) return undefined;
+  const normalized = id.trim();
+  return normalized ? normalized : undefined;
+}
+
 export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login', async (request, reply) => {
     const body = loginSchema.parse(request.body);
@@ -94,11 +104,22 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: posts };
     });
 
-    protectedScope.post('/posts', async (request) => {
+    protectedScope.post('/posts', async (request, reply) => {
       const body = postSchema.parse(request.body);
       const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
-      const tagIds = uniqueIds(body.tagIds);
-      const relatedPostIds = uniqueIds(body.relatedPostIds);
+      const authorId = normalizeRequiredId(body.authorId);
+      const categoryId = normalizeOptionalId(body.categoryId);
+      const coverImageId = normalizeOptionalId(body.coverImageId);
+      const tagIds = uniqueIds(body.tagIds.map((id) => id.trim()));
+      const relatedPostIds = uniqueIds(body.relatedPostIds.map((id) => id.trim()));
+
+      const [author, category] = await Promise.all([
+        fastify.prisma.author.findUnique({ where: { id: authorId }, select: { id: true } }),
+        categoryId ? fastify.prisma.category.findUnique({ where: { id: categoryId }, select: { id: true } }) : Promise.resolve(null)
+      ]);
+
+      if (!author) return reply.code(400).send({ message: 'Auteur introuvable côté API. Recharge la page et réessaie.' });
+      if (categoryId && !category) return reply.code(400).send({ message: 'Catégorie introuvable côté API. Recharge la page et réessaie.' });
 
       const post = await fastify.prisma.post.create({
         data: {
@@ -110,9 +131,9 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           status: body.status,
           publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
-          authorId: body.authorId,
-          categoryId: body.categoryId ?? undefined,
-          coverImageId: body.coverImageId ?? undefined
+          authorId,
+          categoryId,
+          coverImageId
         }
       });
 
@@ -154,8 +175,19 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = await fastify.prisma.post.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ message: 'Post not found' });
 
-      const tagIds = uniqueIds(body.tagIds);
-      const relatedPostIds = uniqueIds(body.relatedPostIds).filter((relatedId) => relatedId !== id);
+      const authorId = normalizeRequiredId(body.authorId);
+      const categoryId = normalizeOptionalId(body.categoryId);
+      const coverImageId = normalizeOptionalId(body.coverImageId);
+      const tagIds = uniqueIds(body.tagIds.map((tagId) => tagId.trim()));
+      const relatedPostIds = uniqueIds(body.relatedPostIds.map((relatedId) => relatedId.trim())).filter((relatedId) => relatedId !== id);
+
+      const [author, category] = await Promise.all([
+        fastify.prisma.author.findUnique({ where: { id: authorId }, select: { id: true } }),
+        categoryId ? fastify.prisma.category.findUnique({ where: { id: categoryId }, select: { id: true } }) : Promise.resolve(null)
+      ]);
+
+      if (!author) return reply.code(400).send({ message: 'Auteur introuvable côté API. Recharge la page et réessaie.' });
+      if (categoryId && !category) return reply.code(400).send({ message: 'Catégorie introuvable côté API. Recharge la page et réessaie.' });
 
       const updated = await fastify.prisma.post.update({
         where: { id },
@@ -168,9 +200,9 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           status: body.status,
           publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? existing.publishedAt ?? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
-          authorId: body.authorId,
-          categoryId: body.categoryId ?? undefined,
-          coverImageId: body.coverImageId ?? undefined
+          authorId,
+          categoryId,
+          coverImageId
         }
       });
 
