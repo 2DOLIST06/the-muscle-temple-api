@@ -54,7 +54,10 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const token = await reply.jwtSign({ userId: user.id, email: user.email, role: user.role }, { expiresIn: '12h' });
-    return { data: { token, user: { id: user.id, email: user.email, role: user.role, displayName: user.displayName } } };
+    return {
+      token,
+      data: { token, user: { id: user.id, email: user.email, role: user.role, displayName: user.displayName } }
+    };
   });
 
   fastify.register(async (protectedScope) => {
