@@ -80,7 +80,7 @@ npm run dev
 - Auth: `POST /admin-api/auth/login`
 - Dashboard: `GET /admin-api/dashboard`
 - CRUD: posts / categories / authors
-- Supporting: tags / media / page SEO
+- Supporting: CRUD tags / CRUD media / page SEO (GET, PUT, DELETE)
 
 Toutes les routes admin hors login exigent un header:
 ```http
