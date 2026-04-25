@@ -363,11 +363,40 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         })
       };
     });
+    protectedScope.put('/tags/:id', async (request) => {
+      const { id } = request.params as { id: string };
+      const body = tagSchema.parse(request.body);
+      return {
+        data: await fastify.prisma.tag.update({
+          where: { id },
+          data: { name: body.name, slug: body.slug ? makeSlug(body.slug) : makeSlug(body.name) }
+        })
+      };
+    });
+    protectedScope.delete('/tags/:id', async (request, reply) => {
+      try {
+        return { data: await fastify.prisma.tag.delete({ where: { id: (request.params as { id: string }).id } }) };
+      } catch {
+        return reply.code(409).send({ message: 'Impossible de supprimer ce tag (posts liés).' });
+      }
+    });
 
     protectedScope.get('/media', async () => ({ data: await fastify.prisma.media.findMany({ orderBy: { createdAt: 'desc' } }) }));
     protectedScope.post('/media', async (request) => {
       const body = mediaSchema.parse(request.body);
       return { data: await fastify.prisma.media.create({ data: body }) };
+    });
+    protectedScope.put('/media/:id', async (request) => {
+      const { id } = request.params as { id: string };
+      const body = mediaSchema.parse(request.body);
+      return { data: await fastify.prisma.media.update({ where: { id }, data: body }) };
+    });
+    protectedScope.delete('/media/:id', async (request, reply) => {
+      try {
+        return { data: await fastify.prisma.media.delete({ where: { id: (request.params as { id: string }).id } }) };
+      } catch {
+        return reply.code(409).send({ message: 'Impossible de supprimer ce media (déjà utilisé).' });
+      }
     });
 
     protectedScope.get('/seo/page/:key', async (request) => {
@@ -387,6 +416,14 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           create: { ...body, pageKey: key, entityType: SeoEntityType.PAGE }
         })
       };
+    });
+    protectedScope.delete('/seo/page/:key', async (request, reply) => {
+      try {
+        const key = (request.params as { key: string }).key;
+        return { data: await fastify.prisma.seoMetadata.delete({ where: { pageKey: key } }) };
+      } catch {
+        return reply.code(404).send({ message: 'SEO metadata not found' });
+      }
     });
   });
 };
