@@ -11,7 +11,7 @@ async function getOrCreateMediaByUrl(url: string, altText: string) {
 }
 
 async function main() {
-  const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@muscletemple.com';
+  const adminEmail = (process.env.ADMIN_EMAIL ?? 'admin@muscletemple.com').trim().toLowerCase();
   const adminPassword = process.env.ADMIN_PASSWORD ?? 'ChangeMeStrongPassword123!';
   const passwordHash = await bcrypt.hash(adminPassword, 10);
 

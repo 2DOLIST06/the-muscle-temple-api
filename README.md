@@ -37,6 +37,7 @@ Variables nécessaires:
 - `DATABASE_URL` (PostgreSQL)
 - `JWT_SECRET` (>= 32 chars)
 - `CORS_ORIGIN` (une ou plusieurs origines, séparées par virgule)
+- `AUTH_DEBUG` (`true`/`false`, optionnel pour logs détaillés de rejet login admin)
 - `PORT` (par défaut 4000)
 - `APP_URL`
 - `ADMIN_EMAIL` (seed)

@@ -7,6 +7,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters for production safety.'),
   APP_URL: z.string().url().default('http://localhost:4000'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  AUTH_DEBUG: z.coerce.boolean().default(false),
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z.string().min(10).optional()
 });

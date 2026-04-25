@@ -79,9 +79,7 @@ model Media {
   updatedAt      DateTime    @updatedAt
   posts          Post[]      @relation("CoverMedia")
   authorAvatars  Author[]
-
   seoOpenGraphFor SeoMetadata[] @relation("SeoOpenGraphImage")
-
 }
 
 model Post {
@@ -138,9 +136,7 @@ model SeoMetadata {
   canonicalUrl     String?
   noIndex          Boolean        @default(false)
   openGraphImageId String?
-
   openGraphImage   Media?         @relation("SeoOpenGraphImage", fields: [openGraphImageId], references: [id])
-
   postId           String?        @unique
   post             Post?          @relation(fields: [postId], references: [id], onDelete: Cascade)
   categoryId       String?        @unique

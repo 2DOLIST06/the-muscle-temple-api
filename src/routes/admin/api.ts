@@ -2,6 +2,7 @@ import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { PostStatus, Prisma, SeoEntityType, UserRole } from '@prisma/client';
 import { z } from 'zod';
+import { env } from '../../config/env.js';
 import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
 import { requireAdminAuth, requireRole } from '../../lib/auth.js';
@@ -18,14 +19,29 @@ function uniqueIds(ids: string[]) {
   return [...new Set(ids.filter(Boolean))];
 }
 
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login', async (request, reply) => {
     const body = loginSchema.parse(request.body);
-    const user = await fastify.prisma.user.findUnique({ where: { email: body.email } });
-    if (!user) return reply.code(401).send({ message: 'Invalid credentials' });
+    const email = normalizeEmail(body.email);
+    const user = await fastify.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      if (env.AUTH_DEBUG) {
+        request.log.warn({ email, reason: 'email_not_found' }, 'Admin login rejected');
+      }
+      return reply.code(401).send({ message: 'Invalid credentials' });
+    }
 
     const isValid = await bcrypt.compare(body.password, user.passwordHash);
-    if (!isValid) return reply.code(401).send({ message: 'Invalid credentials' });
+    if (!isValid) {
+      if (env.AUTH_DEBUG) {
+        request.log.warn({ email, reason: 'bad_password' }, 'Admin login rejected');
+      }
+      return reply.code(401).send({ message: 'Invalid credentials' });
+    }
 
     const token = await reply.jwtSign({ userId: user.id, email: user.email, role: user.role }, { expiresIn: '12h' });
     return { data: { token, user: { id: user.id, email: user.email, role: user.role, displayName: user.displayName } } };
@@ -55,8 +71,9 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       adminOnly.post('/users', async (request) => {
         const body = createUserSchema.parse(request.body);
         const passwordHash = await bcrypt.hash(body.password, 10);
+        const email = normalizeEmail(body.email);
         const user = await fastify.prisma.user.create({
-          data: { email: body.email, passwordHash, role: body.role, displayName: body.displayName }
+          data: { email, passwordHash, role: body.role, displayName: body.displayName }
         });
         return { data: user };
       });
