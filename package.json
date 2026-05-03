@@ -13,7 +13,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
     "cms:dev": "tsx watch src/cms/server.ts",
-    "cms:start": "tsx src/cms/server.ts"
+    "cms:start": "tsx src/cms/server.ts",
+    "cms:typecheck": "tsc --noEmit -p tsconfig.cms.json"
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",
