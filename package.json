@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "prisma generate && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "typecheck": "prisma generate && tsc --noEmit -p tsconfig.json",
-    "prisma:generate": "prisma generate",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prisma:generate": "npx prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "cms:dev": "tsx watch src/cms/server.ts",
+    "cms:start": "tsx src/cms/server.ts",
+    "cms:typecheck": "tsc --noEmit -p tsconfig.cms.json"
   },
   "dependencies": {
     "@fastify/cookie": "^9.4.0",
@@ -22,11 +25,14 @@
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",
     "slugify": "^1.6.6",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "payload": "^3.0.0",
+    "@payloadcms/richtext-lexical": "^3.0.0",
+    "express": "^4.21.2",
+    "prisma": "^6.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
-    "prisma": "^6.6.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }
