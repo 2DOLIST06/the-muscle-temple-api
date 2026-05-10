@@ -86,9 +86,24 @@ model Post {
   id                 String       @id @default(cuid())
   title              String
   slug               String       @unique
+  h1                 String?
+  chapoHtml          String?
   excerpt            String?
   contentMarkdown    String
   contentJson        Json?
+  contentHtml        String?
+  faqJson            Json?
+  heroImageUrl       String?
+  heroImageAlt       String?
+  metaTitle          String?
+  metaDescription    String?
+  canonicalUrl       String?
+  robots             String       @default("noindex,follow")
+  isActive           Boolean      @default(false)
+  isIndexable        Boolean      @default(false)
+  categorySlug       String?
+  tagsJson           Json?
+  jsonLd             Json?
   status             PostStatus   @default(DRAFT)
   publishedAt        DateTime?
   readingTimeMinutes Int?
