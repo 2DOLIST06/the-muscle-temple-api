@@ -33,6 +33,12 @@ function normalizeOptionalId(id?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function normalizeOptionalText(value?: string | null): string | undefined {
+  if (value == null) return undefined;
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+}
+
 export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login', async (request, reply) => {
     const body = loginSchema.parse(request.body);
@@ -130,7 +136,22 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           slug,
           excerpt: body.excerpt,
           contentMarkdown: body.contentMarkdown,
+          h1: normalizeOptionalText(body.h1),
+          chapoHtml: normalizeOptionalText(body.chapoHtml),
           contentJson: body.contentJson as Prisma.InputJsonValue | undefined,
+          contentHtml: normalizeOptionalText(body.contentHtml),
+          faqJson: body.faqJson as Prisma.InputJsonValue | undefined,
+          heroImageUrl: normalizeOptionalText(body.heroImageUrl),
+          heroImageAlt: normalizeOptionalText(body.heroImageAlt),
+          metaTitle: normalizeOptionalText(body.metaTitle),
+          metaDescription: normalizeOptionalText(body.metaDescription),
+          canonicalUrl: normalizeOptionalText(body.canonicalUrl),
+          robots: normalizeOptionalText(body.robots) ?? 'noindex,follow',
+          isActive: body.isActive ?? false,
+          isIndexable: body.isIndexable ?? false,
+          categorySlug: body.categorySlug ? makeSlug(body.categorySlug) : undefined,
+          tagsJson: body.tagsJson as Prisma.InputJsonValue | undefined,
+          jsonLd: (body.jsonLd ?? undefined) as Prisma.InputJsonValue | undefined,
           status: body.status,
           publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
@@ -199,7 +220,22 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           slug: body.slug ? makeSlug(body.slug) : makeSlug(body.title),
           excerpt: body.excerpt,
           contentMarkdown: body.contentMarkdown,
+          h1: normalizeOptionalText(body.h1),
+          chapoHtml: normalizeOptionalText(body.chapoHtml),
           contentJson: body.contentJson as Prisma.InputJsonValue | undefined,
+          contentHtml: normalizeOptionalText(body.contentHtml),
+          faqJson: body.faqJson as Prisma.InputJsonValue | undefined,
+          heroImageUrl: normalizeOptionalText(body.heroImageUrl),
+          heroImageAlt: normalizeOptionalText(body.heroImageAlt),
+          metaTitle: normalizeOptionalText(body.metaTitle),
+          metaDescription: normalizeOptionalText(body.metaDescription),
+          canonicalUrl: normalizeOptionalText(body.canonicalUrl),
+          robots: normalizeOptionalText(body.robots) ?? 'noindex,follow',
+          isActive: body.isActive ?? false,
+          isIndexable: body.isIndexable ?? false,
+          categorySlug: body.categorySlug ? makeSlug(body.categorySlug) : undefined,
+          tagsJson: body.tagsJson as Prisma.InputJsonValue | undefined,
+          jsonLd: (body.jsonLd ?? undefined) as Prisma.InputJsonValue | undefined,
           status: body.status,
           publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? existing.publishedAt ?? new Date() : null,
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,

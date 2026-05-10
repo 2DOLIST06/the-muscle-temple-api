@@ -10,9 +10,9 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
     const skip = (page - 1) * limit;
 
     const [total, posts] = await Promise.all([
-      fastify.prisma.post.count({ where: { status: PostStatus.PUBLISHED } }),
+      fastify.prisma.post.count({ where: { status: PostStatus.PUBLISHED, isActive: true } }),
       fastify.prisma.post.findMany({
-        where: { status: PostStatus.PUBLISHED, publishedAt: { lte: new Date() } },
+        where: { status: PostStatus.PUBLISHED, isActive: true, publishedAt: { lte: new Date() } },
         skip,
         take: limit,
         orderBy: [{ publishedAt: 'desc' }],
@@ -32,7 +32,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/posts/:slug', async (request, reply) => {
     const slug = (request.params as { slug: string }).slug;
     const post = await fastify.prisma.post.findFirst({
-      where: { slug, status: PostStatus.PUBLISHED },
+      where: { slug, status: PostStatus.PUBLISHED, isActive: true },
       include: {
         author: true,
         category: true,
@@ -51,7 +51,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
 
     const relatedPosts = relatedIds.length
       ? await fastify.prisma.post.findMany({
-          where: { id: { in: relatedIds.map((r) => r.targetPostId) }, status: PostStatus.PUBLISHED },
+          where: { id: { in: relatedIds.map((r) => r.targetPostId) }, status: PostStatus.PUBLISHED, isActive: true },
           include: { author: true, coverImage: true }
         })
       : [];
@@ -73,7 +73,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
     if (!category) return reply.code(404).send({ message: 'Category not found' });
 
     const posts = await fastify.prisma.post.findMany({
-      where: { categoryId: category.id, status: PostStatus.PUBLISHED, publishedAt: { lte: new Date() } },
+      where: { categoryId: category.id, status: PostStatus.PUBLISHED, isActive: true, publishedAt: { lte: new Date() } },
       include: { author: true, coverImage: true, seoMetadata: true },
       orderBy: { publishedAt: 'desc' }
     });
@@ -94,7 +94,7 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
     if (!author) return reply.code(404).send({ message: 'Author not found' });
 
     const posts = await fastify.prisma.post.findMany({
-      where: { authorId: author.id, status: PostStatus.PUBLISHED, publishedAt: { lte: new Date() } },
+      where: { authorId: author.id, status: PostStatus.PUBLISHED, isActive: true, publishedAt: { lte: new Date() } },
       include: { category: true, coverImage: true, seoMetadata: true },
       orderBy: { publishedAt: 'desc' }
     });
