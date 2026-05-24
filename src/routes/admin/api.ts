@@ -218,6 +218,14 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ message: 'Un ou plusieurs articles liés sont introuvables côté API. Recharge la page et réessaie.' });
       }
 
+      const existingPost = await fastify.prisma.post.findUnique({
+        where: { slug },
+        select: { id: true }
+      });
+      if (existingPost) {
+        return reply.code(409).send({ message: 'Slug déjà utilisé. Modifie le titre ou le slug.' });
+      }
+
       const post = await fastify.prisma.post.create({
         data: {
           title: body.title,
