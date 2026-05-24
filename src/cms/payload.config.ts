@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { buildConfig } from 'payload';
 import { fileURLToPath } from 'node:url';
 import { Posts } from './collections/posts.js';
@@ -7,16 +8,33 @@ import { Authors } from './collections/authors.js';
 
 const filename = fileURLToPath(import.meta.url);
 const dirname = path.dirname(filename);
+const require = createRequire(import.meta.url);
+
+const getDbAdapter = () => {
+  try {
+    const { postgresAdapter } = require('@payloadcms/db-postgres') as {
+      postgresAdapter: (args: { pool: { connectionString: string } }) => unknown;
+    };
+
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error('Missing DATABASE_URL for Payload Postgres adapter.');
+    }
+
+    return postgresAdapter({
+      pool: { connectionString }
+    });
+  } catch (error) {
+    throw new Error(
+      'Payload Postgres adapter not available. Install "@payloadcms/db-postgres" and set DATABASE_URL. ' +
+        `Original error: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+};
 
 export default buildConfig({
   secret: process.env.PAYLOAD_SECRET || 'change-me-in-production',
-  // NOTE: Payload v3 requires a DB adapter in config (`db`).
-  // In this environment, installing `@payloadcms/db-postgres` is blocked (npm 403),
-  // so we keep a typed placeholder to make the backend status explicit.
-  // Replace with:
-  // db: postgresAdapter({ pool: { connectionString: process.env.DATABASE_URL } })
-  // once package installation is allowed.
-  db: {} as any,
+  db: getDbAdapter() as any,
   collections: [Posts, Categories, Authors],
   typescript: {
     outputFile: path.resolve(dirname, 'payload-types.ts')

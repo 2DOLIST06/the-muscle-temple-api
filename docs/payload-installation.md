@@ -8,6 +8,7 @@ L'installation automatique via `npm install payload` a échoué avec une erreur 
 
 ```bash
 npm install payload @payloadcms/richtext-lexical
+npm install @payloadcms/db-postgres
 ```
 
 Puis initialiser Payload (si vous souhaitez l'app dédiée) :
@@ -31,7 +32,17 @@ npx create-payload-app@latest
 ## Variables d'environnement minimales
 
 - `PAYLOAD_SECRET`
-- `DATABASE_URI`
+- `DATABASE_URL`
+
+## Vérifier que l'adapter DB officiel est bien actif
+
+```bash
+npm ls @payloadcms/db-postgres
+npm run cms:typecheck
+npm run cms:dev
+```
+
+Si l'installation est refusée avec `403 Forbidden`, le registre npm de l'environnement bloque encore le package.
 
 ## Étapes de bascule
 
