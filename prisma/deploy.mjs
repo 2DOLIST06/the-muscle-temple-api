@@ -35,6 +35,26 @@ if (isP3005) {
     process.exit(0);
   }
 
+  const dbPushOutput = `${dbPush.stdout ?? ''}
+${dbPush.stderr ?? ''}`;
+  const needsAcceptDataLoss = dbPushOutput.includes('--accept-data-loss');
+
+  if (needsAcceptDataLoss) {
+    console.warn('\n[prisma-deploy] `prisma db push` requires `--accept-data-loss` for pending schema changes.');
+    console.warn('[prisma-deploy] Retrying with `prisma db push --accept-data-loss` for non-baselined startup sync.');
+
+    const dbPushAcceptDataLoss = run('prisma', ['db', 'push', '--accept-data-loss']);
+    printOutput(dbPushAcceptDataLoss);
+
+    if ((dbPushAcceptDataLoss.status ?? 1) === 0) {
+      console.warn('[prisma-deploy] `prisma db push --accept-data-loss` completed successfully. Continuing startup.');
+      process.exit(0);
+    }
+
+    console.error('\n[prisma-deploy] `prisma db push --accept-data-loss` failed after P3005. Startup aborted.');
+    process.exit(dbPushAcceptDataLoss.status ?? 1);
+  }
+
   console.error('\n[prisma-deploy] `prisma db push` failed after P3005. Startup aborted.');
   process.exit(dbPush.status ?? 1);
 }
