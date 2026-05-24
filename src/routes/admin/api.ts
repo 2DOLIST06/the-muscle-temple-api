@@ -62,23 +62,77 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login', async (request, reply) => {
     const body = loginSchema.parse(request.body);
     const email = normalizeEmail(body.email);
+
+    if (env.AUTH_DEBUG) {
+      request.log.info(
+        {
+          route: '/admin-api/auth/login',
+          email,
+          passwordLength: body.password.length
+        },
+        'Admin login attempt received'
+      );
+    }
+
     const user = await fastify.prisma.user.findUnique({ where: { email } });
+
+    if (env.AUTH_DEBUG) {
+      request.log.info(
+        {
+          email,
+          userFound: Boolean(user),
+          userIdPreview: user ? `${user.id.slice(0, 6)}...` : null,
+          role: user?.role,
+          hasPasswordHash: Boolean(user?.passwordHash),
+          passwordHashPrefix: user?.passwordHash ? user.passwordHash.slice(0, 4) : null,
+          passwordHashLength: user?.passwordHash?.length ?? 0
+        },
+        'Admin login user lookup result'
+      );
+    }
+
     if (!user) {
       if (env.AUTH_DEBUG) {
-        request.log.warn({ email, reason: 'email_not_found' }, 'Admin login rejected');
+        request.log.warn({ email, reason: 'email_not_found', statusCode: 401 }, 'Admin login rejected');
       }
       return reply.code(401).send({ message: 'Invalid credentials' });
     }
 
     const isValid = await bcrypt.compare(body.password, user.passwordHash);
+
+    if (env.AUTH_DEBUG) {
+      request.log.info(
+        {
+          email,
+          compareResult: isValid,
+          hashAlgorithmGuess: user.passwordHash.startsWith('$2') ? 'bcrypt' : 'unknown',
+          statusCode: isValid ? 200 : 401
+        },
+        'Admin password verification result'
+      );
+    }
+
     if (!isValid) {
       if (env.AUTH_DEBUG) {
-        request.log.warn({ email, reason: 'bad_password' }, 'Admin login rejected');
+        request.log.warn({ email, reason: 'bad_password', statusCode: 401 }, 'Admin login rejected');
       }
       return reply.code(401).send({ message: 'Invalid credentials' });
     }
 
     const token = await reply.jwtSign({ userId: user.id, email: user.email, role: user.role }, { expiresIn: '12h' });
+
+    if (env.AUTH_DEBUG) {
+      request.log.info(
+        {
+          email,
+          tokenFormat: 'jwt',
+          tokenPreview: `${token.slice(0, 12)}...`,
+          statusCode: 200
+        },
+        'Admin login success response'
+      );
+    }
+
     return {
       token,
       data: { token, user: { id: user.id, email: user.email, role: user.role, displayName: user.displayName } }
