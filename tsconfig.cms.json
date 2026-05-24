@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist-cms"
-  },
-  "include": ["src/cms/**/*.ts"],
-  "exclude": ["node_modules", "dist", "dist-cms"]
-}
