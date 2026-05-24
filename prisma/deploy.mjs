@@ -24,9 +24,39 @@ const isP3005 = output.includes('P3005');
 const isP1001 = output.includes('P1001');
 
 if (isP3005) {
-  console.warn('\n[prisma-deploy] Skipping startup migration because database is non-empty and not baselined (P3005).');
-  console.warn('[prisma-deploy] Server will start without applying migrations. Baseline migrations before next deploy.');
-  process.exit(0);
+  console.warn('\n[prisma-deploy] Database is non-empty and not baselined (P3005).');
+  console.warn('[prisma-deploy] Attempting `prisma db push` to align schema without migration history.');
+
+  const dbPush = run('prisma', ['db', 'push']);
+  printOutput(dbPush);
+
+  if ((dbPush.status ?? 1) === 0) {
+    console.warn('[prisma-deploy] `prisma db push` completed successfully. Continuing startup.');
+    process.exit(0);
+  }
+
+  const dbPushOutput = `${dbPush.stdout ?? ''}
+${dbPush.stderr ?? ''}`;
+  const needsAcceptDataLoss = dbPushOutput.includes('--accept-data-loss');
+
+  if (needsAcceptDataLoss) {
+    console.warn('\n[prisma-deploy] `prisma db push` requires `--accept-data-loss` for pending schema changes.');
+    console.warn('[prisma-deploy] Retrying with `prisma db push --accept-data-loss` for non-baselined startup sync.');
+
+    const dbPushAcceptDataLoss = run('prisma', ['db', 'push', '--accept-data-loss']);
+    printOutput(dbPushAcceptDataLoss);
+
+    if ((dbPushAcceptDataLoss.status ?? 1) === 0) {
+      console.warn('[prisma-deploy] `prisma db push --accept-data-loss` completed successfully. Continuing startup.');
+      process.exit(0);
+    }
+
+    console.error('\n[prisma-deploy] `prisma db push --accept-data-loss` failed after P3005. Startup aborted.');
+    process.exit(dbPushAcceptDataLoss.status ?? 1);
+  }
+
+  console.error('\n[prisma-deploy] `prisma db push` failed after P3005. Startup aborted.');
+  process.exit(dbPush.status ?? 1);
 }
 
 if (isP1001) {
