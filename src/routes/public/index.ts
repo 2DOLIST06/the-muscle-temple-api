@@ -2,17 +2,26 @@ import { FastifyPluginAsync } from 'fastify';
 import { PostStatus } from '@prisma/client';
 import { paginationQuerySchema } from '../../validation/common.js';
 
+const getPublicPostWhere = () => ({
+  status: PostStatus.PUBLISHED,
+  isActive: true,
+  publishedAt: { lte: new Date() }
+});
+
 export const publicRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/health', async () => ({ ok: true }));
 
-  fastify.get('/posts', async (request) => {
+  fastify.get('/posts', async (request, reply) => {
     const { page, limit } = paginationQuerySchema.parse(request.query);
     const skip = (page - 1) * limit;
+    const publicPostWhere = getPublicPostWhere();
+
+    reply.header('Cache-Control', 'no-store');
 
     const [total, posts] = await Promise.all([
-      fastify.prisma.post.count({ where: { status: PostStatus.PUBLISHED, isActive: true } }),
+      fastify.prisma.post.count({ where: publicPostWhere }),
       fastify.prisma.post.findMany({
-        where: { status: PostStatus.PUBLISHED, isActive: true, publishedAt: { lte: new Date() } },
+        where: publicPostWhere,
         skip,
         take: limit,
         orderBy: [{ publishedAt: 'desc' }],
