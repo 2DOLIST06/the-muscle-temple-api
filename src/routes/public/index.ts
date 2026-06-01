@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import { PostStatus } from '@prisma/client';
+import { PostStatus, Prisma } from '@prisma/client';
 import { paginationQuerySchema } from '../../validation/common.js';
 
 const getPublicPostWhere = () => ({
@@ -7,6 +7,32 @@ const getPublicPostWhere = () => ({
   isActive: true,
   publishedAt: { lte: new Date() }
 });
+
+const postInclude = {
+  author: true,
+  category: true,
+  coverImage: true,
+  seoMetadata: true,
+  postTags: { include: { tag: true } }
+} as const;
+
+type PublicPost = Prisma.PostGetPayload<{ include: typeof postInclude }>;
+
+const serializePublicPost = (post: PublicPost) => {
+  const tags = post.postTags.map(({ tag }) => tag);
+
+  return {
+    ...post,
+    category: post.category,
+    categorySlug: post.categorySlug ?? post.category?.slug ?? null,
+    author: post.author,
+    authorSlug: post.author.slug,
+    tags,
+    tagsJson: post.tagsJson,
+    seo: post.seoMetadata,
+    seoMetadata: post.seoMetadata
+  };
+};
 
 export const publicRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/health', async () => ({ ok: true }));
@@ -25,17 +51,11 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
         skip,
         take: limit,
         orderBy: [{ publishedAt: 'desc' }],
-        include: {
-          author: true,
-          category: true,
-          coverImage: true,
-          seoMetadata: true,
-          postTags: { include: { tag: true } }
-        }
+        include: postInclude
       })
     ]);
 
-    return { data: posts, meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    return { data: posts.map(serializePublicPost), meta: { page, limit, total, totalPages: Math.ceil(total / limit) } };
   });
 
   fastify.get('/posts/:slug', async (request, reply) => {
