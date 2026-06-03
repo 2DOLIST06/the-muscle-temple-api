@@ -42,7 +42,7 @@ function normalizeOptionalText(value?: string | null): string | undefined {
 
 async function ensureExistingIds(
   prisma: PrismaClient,
-  model: 'tag' | 'post' | 'media',
+  model: 'tag' | 'post',
   ids: string[]
 ): Promise<string[]> {
   if (!ids.length) return [];
@@ -54,9 +54,9 @@ async function ensureExistingIds(
     const found = await prisma.post.findMany({ where: { id: { in: ids } }, select: { id: true } });
     return found.map((item) => item.id);
   }
-  const found = await prisma.media.findMany({ where: { id: { in: ids } }, select: { id: true } });
-  return found.map((item) => item.id);
+  return [];
 }
+
 
 export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login', async (request, reply) => {
@@ -203,20 +203,12 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       if (!author) return reply.code(400).send({ message: 'Auteur introuvable côté API. Recharge la page et réessaie.' });
       if (categoryId && !category) return reply.code(400).send({ message: 'Catégorie introuvable côté API. Recharge la page et réessaie.' });
 
-      if (coverImageId) {
-        const cover = await fastify.prisma.media.findUnique({ where: { id: coverImageId }, select: { id: true } });
-        if (!cover) return reply.code(400).send({ message: 'Image de couverture introuvable côté API. Recharge la page et réessaie.' });
-      }
-
       const existingTagIds = await ensureExistingIds(fastify.prisma, 'tag', tagIds);
-      if (existingTagIds.length !== tagIds.length) {
-        return reply.code(400).send({ message: 'Un ou plusieurs tags sont introuvables côté API. Recharge la page et réessaie.' });
-      }
-
       const existingRelatedIds = await ensureExistingIds(fastify.prisma, 'post', relatedPostIds);
-      if (existingRelatedIds.length !== relatedPostIds.length) {
-        return reply.code(400).send({ message: 'Un ou plusieurs articles liés sont introuvables côté API. Recharge la page et réessaie.' });
-      }
+
+      const safeCoverImageId = coverImageId
+        ? (await fastify.prisma.media.findUnique({ where: { id: coverImageId }, select: { id: true } }))?.id
+        : undefined;
 
       const existingPost = await fastify.prisma.post.findUnique({
         where: { slug },
@@ -253,18 +245,18 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
           authorId,
           categoryId,
-          coverImageId
+          coverImageId: safeCoverImageId
         }
       });
 
-      if (tagIds.length) {
+      if (existingTagIds.length) {
         await fastify.prisma.postTag.createMany({
-          data: tagIds.map((tagId) => ({ postId: post.id, tagId })),
+          data: existingTagIds.map((tagId) => ({ postId: post.id, tagId })),
           skipDuplicates: true
         });
       }
 
-      const filteredRelatedPostIds = relatedPostIds.filter((relatedId) => relatedId !== post.id);
+      const filteredRelatedPostIds = existingRelatedIds.filter((relatedId) => relatedId !== post.id);
       if (filteredRelatedPostIds.length) {
         await fastify.prisma.postRelation.createMany({
           data: filteredRelatedPostIds.map((targetPostId) => ({ sourcePostId: post.id, targetPostId })),
@@ -309,20 +301,12 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       if (!author) return reply.code(400).send({ message: 'Auteur introuvable côté API. Recharge la page et réessaie.' });
       if (categoryId && !category) return reply.code(400).send({ message: 'Catégorie introuvable côté API. Recharge la page et réessaie.' });
 
-      if (coverImageId) {
-        const cover = await fastify.prisma.media.findUnique({ where: { id: coverImageId }, select: { id: true } });
-        if (!cover) return reply.code(400).send({ message: 'Image de couverture introuvable côté API. Recharge la page et réessaie.' });
-      }
-
       const existingTagIds = await ensureExistingIds(fastify.prisma, 'tag', tagIds);
-      if (existingTagIds.length !== tagIds.length) {
-        return reply.code(400).send({ message: 'Un ou plusieurs tags sont introuvables côté API. Recharge la page et réessaie.' });
-      }
-
       const existingRelatedIds = await ensureExistingIds(fastify.prisma, 'post', relatedPostIds);
-      if (existingRelatedIds.length !== relatedPostIds.length) {
-        return reply.code(400).send({ message: 'Un ou plusieurs articles liés sont introuvables côté API. Recharge la page et réessaie.' });
-      }
+
+      const safeCoverImageId = coverImageId
+        ? (await fastify.prisma.media.findUnique({ where: { id: coverImageId }, select: { id: true } }))?.id
+        : undefined;
 
       const updated = await fastify.prisma.post.update({
         where: { id },
@@ -352,22 +336,22 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           readingTimeMinutes: body.readingTimeMinutes ?? undefined,
           authorId,
           categoryId,
-          coverImageId
+          coverImageId: safeCoverImageId
         }
       });
 
       await fastify.prisma.postTag.deleteMany({ where: { postId: id } });
-      if (tagIds.length) {
+      if (existingTagIds.length) {
         await fastify.prisma.postTag.createMany({
-          data: tagIds.map((tagId) => ({ postId: id, tagId })),
+          data: existingTagIds.map((tagId) => ({ postId: id, tagId })),
           skipDuplicates: true
         });
       }
 
       await fastify.prisma.postRelation.deleteMany({ where: { sourcePostId: id } });
-      if (relatedPostIds.length) {
+      if (existingRelatedIds.length) {
         await fastify.prisma.postRelation.createMany({
-          data: relatedPostIds.map((targetPostId) => ({ sourcePostId: id, targetPostId })),
+          data: existingRelatedIds.map((targetPostId) => ({ sourcePostId: id, targetPostId })),
           skipDuplicates: true
         });
       }
