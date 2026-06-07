@@ -90,7 +90,7 @@ model Post {
   title              String
   slug               String
   locale             String       @default("en")
-  translationGroupId String
+  translationGroupId String       @default(dbgenerated("gen_random_uuid()::text"))
   h1                 String?
   chapoHtml          String?
   excerpt            String?

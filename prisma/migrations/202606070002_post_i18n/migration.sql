@@ -1,11 +1,11 @@
 -- Add multilingual fields safely: existing posts are English and grouped by their own id.
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 ALTER TABLE "Post" ADD COLUMN "locale" TEXT NOT NULL DEFAULT 'en';
-ALTER TABLE "Post" ADD COLUMN "translationGroupId" TEXT;
+ALTER TABLE "Post" ADD COLUMN "translationGroupId" TEXT NOT NULL DEFAULT gen_random_uuid()::text;
 
 UPDATE "Post" SET "locale" = 'en' WHERE "locale" IS NULL;
-UPDATE "Post" SET "translationGroupId" = "id" WHERE "translationGroupId" IS NULL;
-
-ALTER TABLE "Post" ALTER COLUMN "translationGroupId" SET NOT NULL;
+UPDATE "Post" SET "translationGroupId" = "id";
 
 DROP INDEX IF EXISTS "Post_slug_key";
 
