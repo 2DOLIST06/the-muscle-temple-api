@@ -38,6 +38,8 @@ Variables nécessaires:
 - `JWT_SECRET` (>= 32 chars)
 - `CORS_ORIGIN` (une ou plusieurs origines, séparées par virgule)
 - `AUTH_DEBUG` (`true`/`false`, optionnel pour logs détaillés de rejet login admin)
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `AWS_S3_BUCKET_NAME` / `AWS_CLOUDFRONT_URL` pour les uploads d’images S3 via CloudFront
+- `AWS_S3_UPLOAD_MAX_BYTES` (par défaut `5242880`, soit 5 Mo)
 - `PORT` (par défaut 4000)
 - `APP_URL`
 - `ADMIN_EMAIL` (seed)
@@ -80,7 +82,7 @@ npm run dev
 - Auth: `POST /admin-api/auth/login`
 - Dashboard: `GET /admin-api/dashboard`
 - CRUD: posts / categories / authors
-- Supporting: CRUD tags / CRUD media / page SEO (GET, PUT, DELETE)
+- Supporting: CRUD tags / CRUD media / upload media S3 (`POST /admin-api/media/upload`) / page SEO (GET, PUT, DELETE)
 
 Toutes les routes admin hors login exigent un header:
 ```http

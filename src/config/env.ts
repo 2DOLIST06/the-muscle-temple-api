@@ -8,6 +8,12 @@ const envSchema = z.object({
   APP_URL: z.string().url().default('http://localhost:4000'),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   AUTH_DEBUG: z.coerce.boolean().default(false),
+  AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  AWS_REGION: z.string().min(1).optional(),
+  AWS_S3_BUCKET_NAME: z.string().min(1).optional(),
+  AWS_CLOUDFRONT_URL: z.string().url().optional(),
+  AWS_S3_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
   ADMIN_EMAIL: z.string().email().optional(),
   ADMIN_PASSWORD: z.string().min(10).optional()
 });

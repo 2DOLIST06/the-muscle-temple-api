@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import Fastify from 'fastify';
+import Fastify, { FastifyPluginCallback } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
@@ -9,6 +9,11 @@ import { prisma } from './db/client.js';
 import { publicRoutes } from './routes/public/index.js';
 import { adminApiRoutes } from './routes/admin/api.js';
 import { adminPanelRoutes } from './routes/admin/panel.js';
+
+const MULTIPART_PACKAGE = '@fastify/multipart';
+const { default: multipart } = (await import(MULTIPART_PACKAGE)) as {
+  default: FastifyPluginCallback<{ limits?: { files?: number; fileSize?: number } }>;
+};
 
 const app = Fastify({ logger: true });
 
@@ -25,6 +30,12 @@ app.register(cors, {
 });
 app.register(cookie);
 app.register(jwt, { secret: env.JWT_SECRET });
+app.register(multipart, {
+  limits: {
+    files: 1,
+    fileSize: env.AWS_S3_UPLOAD_MAX_BYTES
+  }
+});
 
 app.register(publicRoutes, { prefix: '/api' });
 app.register(adminApiRoutes, { prefix: '/admin-api' });
