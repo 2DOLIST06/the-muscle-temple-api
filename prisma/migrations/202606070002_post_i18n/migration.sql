@@ -2,6 +2,7 @@
 ALTER TABLE "Post" ADD COLUMN "locale" TEXT NOT NULL DEFAULT 'en';
 ALTER TABLE "Post" ADD COLUMN "translationGroupId" TEXT;
 
+UPDATE "Post" SET "locale" = 'en' WHERE "locale" IS NULL;
 UPDATE "Post" SET "translationGroupId" = "id" WHERE "translationGroupId" IS NULL;
 
 ALTER TABLE "Post" ALTER COLUMN "translationGroupId" SET NOT NULL;
