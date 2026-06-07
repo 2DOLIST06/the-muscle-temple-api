@@ -75,6 +75,9 @@ model Media {
   caption        String?
   mimeType       String?
   source         String      @default("external")
+  storageKey     String?     @unique
+  bucket         String?
+  sizeBytes      Int?
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
   posts          Post[]      @relation("CoverMedia")

@@ -6,6 +6,7 @@ import { env } from '../../config/env.js';
 import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
 import { requireAdminAuth, requireRole } from '../../lib/auth.js';
+import { deleteImageFromS3, ImageUploadError, S3StorageError, uploadImageToS3 } from '../../lib/storage/s3.js';
 
 const pageSeoSchema = z.object({
   title: z.string().max(70).optional(),
@@ -39,6 +40,16 @@ function normalizeOptionalText(value?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+
+async function getDirectMediaUsageCount(prisma: PrismaClient, mediaId: string): Promise<number> {
+  const [coverCount, openGraphCount, avatarCount] = await Promise.all([
+    prisma.post.count({ where: { coverImageId: mediaId } }),
+    prisma.seoMetadata.count({ where: { openGraphImageId: mediaId } }),
+    prisma.author.count({ where: { avatarMediaId: mediaId } })
+  ]);
+
+  return coverCount + openGraphCount + avatarCount;
+}
 
 async function ensureExistingIds(
   prisma: PrismaClient,
@@ -564,6 +575,80 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     protectedScope.get('/media', async () => ({ data: await fastify.prisma.media.findMany({ orderBy: { createdAt: 'desc' } }) }));
+    protectedScope.post('/media/upload', async (request, reply) => {
+      if (!request.isMultipart()) {
+        return reply.code(400).send({ message: 'La requête doit être envoyée en multipart/form-data.' });
+      }
+
+      let fileBuffer: Buffer | null = null;
+      let filename: string | undefined;
+      let declaredMimeType: string | undefined;
+      let context: string | undefined;
+
+      try {
+        for await (const part of request.parts()) {
+          if (part.type === 'file') {
+            if (fileBuffer) {
+              return reply.code(400).send({ message: 'Un seul fichier image est autorisé par requête.' });
+            }
+
+            filename = part.filename;
+            declaredMimeType = part.mimetype;
+            fileBuffer = await part.toBuffer();
+            continue;
+          }
+
+          if (part.fieldname === 'context') {
+            context = String(part.value ?? '');
+          }
+        }
+
+        if (!fileBuffer) {
+          return reply.code(400).send({ message: 'Fichier image absent. Ajoute un champ fichier multipart.' });
+        }
+
+        const uploadedImage = await uploadImageToS3({
+          buffer: fileBuffer,
+          filename,
+          declaredMimeType,
+          context
+        });
+
+        try {
+          const media = await fastify.prisma.media.create({
+            data: {
+              url: uploadedImage.url,
+              altText: null,
+              caption: null,
+              mimeType: uploadedImage.mimeType,
+              source: 's3',
+              storageKey: uploadedImage.storageKey,
+              bucket: uploadedImage.bucket,
+              sizeBytes: uploadedImage.sizeBytes
+            }
+          });
+
+          return { data: media };
+        } catch (error) {
+          await deleteImageFromS3(uploadedImage.storageKey, uploadedImage.bucket).catch((deleteError) => {
+            request.log.error(deleteError, 'Failed to rollback S3 image after database error');
+          });
+          request.log.error(error, 'Failed to create media database row after S3 upload');
+          return reply.code(500).send({ message: 'Image uploadée sur S3, mais erreur lors de la création du média en base de données.' });
+        }
+      } catch (error) {
+        if (error instanceof ImageUploadError || error instanceof S3StorageError) {
+          return reply.code(error.statusCode).send({ message: error.message });
+        }
+
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({ message: `Fichier trop lourd. Taille maximale: ${env.AWS_S3_UPLOAD_MAX_BYTES} octets.` });
+        }
+
+        request.log.error(error, 'Unexpected media upload error');
+        return reply.code(500).send({ message: 'Erreur inattendue pendant l’upload du média.' });
+      }
+    });
     protectedScope.post('/media', async (request) => {
       const body = mediaSchema.parse(request.body);
       return { data: await fastify.prisma.media.create({ data: body }) };
@@ -574,8 +659,34 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: await fastify.prisma.media.update({ where: { id }, data: body }) };
     });
     protectedScope.delete('/media/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const media = await fastify.prisma.media.findUnique({ where: { id } });
+
+      if (!media) {
+        return reply.code(404).send({ message: 'Media not found' });
+      }
+
+      if (media.source === 's3') {
+        const usageCount = await getDirectMediaUsageCount(fastify.prisma, id);
+        if (usageCount > 0) {
+          return reply.code(409).send({ message: 'Impossible de supprimer ce media S3 (déjà utilisé comme couverture, image Open Graph ou avatar).' });
+        }
+
+        if (media.storageKey) {
+          try {
+            await deleteImageFromS3(media.storageKey, media.bucket);
+          } catch (error) {
+            if (error instanceof S3StorageError) {
+              return reply.code(error.statusCode).send({ message: error.message });
+            }
+            request.log.error(error, 'Unexpected S3 delete error');
+            return reply.code(502).send({ message: 'Erreur suppression AWS S3.' });
+          }
+        }
+      }
+
       try {
-        return { data: await fastify.prisma.media.delete({ where: { id: (request.params as { id: string }).id } }) };
+        return { data: await fastify.prisma.media.delete({ where: { id } }) };
       } catch {
         return reply.code(409).send({ message: 'Impossible de supprimer ce media (déjà utilisé).' });
       }

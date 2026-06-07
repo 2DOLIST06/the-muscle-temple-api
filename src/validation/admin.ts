@@ -19,7 +19,10 @@ export const mediaSchema = z.object({
   altText: z.string().optional(),
   caption: z.string().optional(),
   mimeType: z.string().optional(),
-  source: z.string().optional()
+  source: z.string().optional(),
+  storageKey: z.string().optional().nullable(),
+  bucket: z.string().optional().nullable(),
+  sizeBytes: z.coerce.number().int().positive().optional().nullable()
 });
 
 export const authorSchema = z.object({
