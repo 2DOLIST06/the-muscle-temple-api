@@ -1,5 +1,6 @@
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { PostStatus, Prisma, PrismaClient, SeoEntityType, UserRole } from '@prisma/client';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
@@ -7,6 +8,7 @@ import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
 import { requireAdminAuth, requireRole } from '../../lib/auth.js';
 import { deleteImageFromS3, ImageUploadError, S3StorageError, uploadImageToS3 } from '../../lib/storage/s3.js';
+import { buildPostCanonical, buildPostPath } from '../../lib/seo/urls.js';
 
 const pageSeoSchema = z.object({
   title: z.string().max(70).optional(),
@@ -40,6 +42,71 @@ function normalizeOptionalText(value?: string | null): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function normalizeTranslationGroupId(value?: string | null): string | undefined {
+  return normalizeOptionalText(value);
+}
+
+function serializeAdminPost<T extends { locale: string; slug: string; translationGroupId: string }>(post: T) {
+  return {
+    ...post,
+    path: buildPostPath(post.locale, post.slug),
+    canonicalUrl: buildPostCanonical(post.locale, post.slug)
+  };
+}
+
+async function ensurePostI18nAvailable(
+  prisma: PrismaClient,
+  input: { locale: string; slug: string; translationGroupId: string; excludePostId?: string }
+): Promise<string | null> {
+  const slugConflict = await prisma.post.findFirst({
+    where: {
+      locale: input.locale,
+      slug: input.slug,
+      ...(input.excludePostId ? { id: { not: input.excludePostId } } : {})
+    },
+    select: { id: true }
+  });
+  if (slugConflict) return `Slug déjà utilisé pour la locale ${input.locale}. Modifie le slug ou la locale.`;
+
+  const translationConflict = await prisma.post.findFirst({
+    where: {
+      translationGroupId: input.translationGroupId,
+      locale: input.locale,
+      ...(input.excludePostId ? { id: { not: input.excludePostId } } : {})
+    },
+    select: { id: true }
+  });
+  if (translationConflict) return `Une traduction ${input.locale} existe déjà dans ce groupe de traduction.`;
+
+  return null;
+}
+
+async function getAdminTranslations(prisma: PrismaClient, translationGroupIds: string[]) {
+  const uniqueGroupIds = uniqueIds(translationGroupIds);
+  if (!uniqueGroupIds.length) return new Map<string, Array<{ id: string; locale: string; slug: string; title: string; status: PostStatus; path: string; canonicalUrl: string }>>();
+
+  const translations = await prisma.post.findMany({
+    where: { translationGroupId: { in: uniqueGroupIds } },
+    select: { id: true, locale: true, slug: true, title: true, status: true, translationGroupId: true }
+  });
+
+  const byGroup = new Map<string, Array<{ id: string; locale: string; slug: string; title: string; status: PostStatus; path: string; canonicalUrl: string }>>();
+  for (const translation of translations) {
+    const items = byGroup.get(translation.translationGroupId) ?? [];
+    items.push({
+      id: translation.id,
+      locale: translation.locale,
+      slug: translation.slug,
+      title: translation.title,
+      status: translation.status,
+      path: buildPostPath(translation.locale, translation.slug),
+      canonicalUrl: buildPostCanonical(translation.locale, translation.slug)
+    });
+    byGroup.set(translation.translationGroupId, items);
+  }
+
+  return byGroup;
+}
 
 async function getDirectMediaUsageCount(prisma: PrismaClient, mediaId: string): Promise<number> {
   const [coverCount, openGraphCount, avatarCount] = await Promise.all([
@@ -190,16 +257,50 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           coverImage: true,
           seoMetadata: true,
           postTags: { include: { tag: true } },
-          relatedFrom: { include: { targetPost: { select: { id: true, title: true, slug: true } } } }
+          relatedFrom: { include: { targetPost: { select: { id: true, title: true, slug: true, locale: true, translationGroupId: true } } } }
         },
         orderBy: { updatedAt: 'desc' }
       });
-      return { data: posts };
+      const translationsByGroup = await getAdminTranslations(fastify.prisma, posts.map((post) => post.translationGroupId));
+      return {
+        data: posts.map((post) => ({
+          ...serializeAdminPost(post),
+          translations: (translationsByGroup.get(post.translationGroupId) ?? []).filter((translation) => translation.id !== post.id)
+        }))
+      };
+    });
+
+    protectedScope.get('/posts/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const post = await fastify.prisma.post.findUnique({
+        where: { id },
+        include: {
+          author: true,
+          category: true,
+          coverImage: true,
+          seoMetadata: true,
+          postTags: { include: { tag: true } },
+          relatedFrom: { include: { targetPost: { select: { id: true, title: true, slug: true, locale: true, translationGroupId: true } } } }
+        }
+      });
+
+      if (!post) return reply.code(404).send({ message: 'Post not found' });
+
+      const translationsByGroup = await getAdminTranslations(fastify.prisma, [post.translationGroupId]);
+      return {
+        data: {
+          ...serializeAdminPost(post),
+          translations: (translationsByGroup.get(post.translationGroupId) ?? []).filter((translation) => translation.id !== post.id)
+        }
+      };
     });
 
     protectedScope.post('/posts', async (request, reply) => {
       const body = postSchema.parse(request.body);
       const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
+      const locale = body.locale;
+      const providedTranslationGroupId = normalizeTranslationGroupId(body.translationGroupId);
+      const translationGroupId = providedTranslationGroupId ?? randomUUID();
       const authorId = normalizeRequiredId(body.authorId);
       const categoryId = normalizeOptionalId(body.categoryId);
       const coverImageId = normalizeOptionalId(body.coverImageId);
@@ -229,18 +330,20 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ message: 'Un ou plusieurs articles liés sont introuvables côté API. Recharge la page et réessaie.' });
       }
 
-      const existingPost = await fastify.prisma.post.findUnique({
-        where: { slug },
-        select: { id: true }
-      });
-      if (existingPost) {
-        return reply.code(409).send({ message: 'Slug déjà utilisé. Modifie le titre ou le slug.' });
+      if (providedTranslationGroupId) {
+        const groupExists = await fastify.prisma.post.findFirst({ where: { translationGroupId }, select: { id: true } });
+        if (!groupExists) return reply.code(400).send({ message: 'Groupe de traduction introuvable.' });
       }
+
+      const i18nConflict = await ensurePostI18nAvailable(fastify.prisma, { locale, slug, translationGroupId });
+      if (i18nConflict) return reply.code(409).send({ message: i18nConflict });
 
       const post = await fastify.prisma.post.create({
         data: {
           title: body.title,
           slug,
+          locale,
+          translationGroupId,
           excerpt: body.excerpt,
           contentMarkdown: body.contentHtml,
           h1: normalizeOptionalText(body.h1),
@@ -297,15 +400,20 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      return { data: post };
+      return { data: serializeAdminPost(post) };
     });
 
     protectedScope.put('/posts/:id', async (request, reply) => {
       const { id } = request.params as { id: string };
+      const rawBody = request.body as { locale?: unknown } | null;
       const body = postSchema.parse(request.body);
       const existing = await fastify.prisma.post.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ message: 'Post not found' });
 
+      const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
+      const locale = rawBody && Object.prototype.hasOwnProperty.call(rawBody, 'locale') ? body.locale : existing.locale;
+      const providedTranslationGroupId = normalizeTranslationGroupId(body.translationGroupId);
+      const translationGroupId = providedTranslationGroupId ?? existing.translationGroupId;
       const authorId = normalizeRequiredId(body.authorId);
       const categoryId = normalizeOptionalId(body.categoryId);
       const coverImageId = normalizeOptionalId(body.coverImageId);
@@ -335,11 +443,21 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ message: 'Un ou plusieurs articles liés sont introuvables côté API. Recharge la page et réessaie.' });
       }
 
+      if (providedTranslationGroupId && providedTranslationGroupId !== existing.translationGroupId) {
+        const groupExists = await fastify.prisma.post.findFirst({ where: { translationGroupId }, select: { id: true } });
+        if (!groupExists) return reply.code(400).send({ message: 'Groupe de traduction introuvable.' });
+      }
+
+      const i18nConflict = await ensurePostI18nAvailable(fastify.prisma, { locale, slug, translationGroupId, excludePostId: id });
+      if (i18nConflict) return reply.code(409).send({ message: i18nConflict });
+
       const updated = await fastify.prisma.post.update({
         where: { id },
         data: {
           title: body.title,
-          slug: body.slug ? makeSlug(body.slug) : makeSlug(body.title),
+          slug,
+          locale,
+          translationGroupId,
           excerpt: body.excerpt,
           contentMarkdown: body.contentHtml,
           h1: normalizeOptionalText(body.h1),
@@ -405,7 +523,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      return { data: updated };
+      return { data: serializeAdminPost(updated) };
     });
 
     protectedScope.delete('/posts/:id', async (request) => {
