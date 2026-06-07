@@ -88,7 +88,9 @@ model Media {
 model Post {
   id                 String       @id @default(cuid())
   title              String
-  slug               String       @unique
+  slug               String
+  locale             String       @default("en")
+  translationGroupId String       @default(dbgenerated("gen_random_uuid()::text"))
   h1                 String?
   chapoHtml          String?
   excerpt            String?
@@ -123,6 +125,10 @@ model Post {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
+  @@unique([locale, slug])
+  @@unique([translationGroupId, locale])
+  @@index([translationGroupId])
+  @@index([locale, status, publishedAt])
   @@index([status, publishedAt])
   @@index([categoryId])
   @@index([authorId])
