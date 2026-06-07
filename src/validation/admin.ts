@@ -1,6 +1,7 @@
 import { PostStatus, UserRole } from '@prisma/client';
 import { z } from 'zod';
 import { seoSchema } from './common.js';
+import { SUPPORTED_POST_LOCALES } from '../lib/seo/urls.js';
 
 export const loginSchema = z.object({
   email: z.string().email(),
@@ -48,6 +49,8 @@ export const tagSchema = z.object({
 export const postSchema = z.object({
   title: z.string().min(4),
   slug: z.string().optional(),
+  locale: z.enum(SUPPORTED_POST_LOCALES).default('en'),
+  translationGroupId: z.string().trim().optional().nullable(),
   excerpt: z.string().max(280).optional(),
   contentHtml: z.string().min(10),
   contentJson: z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())]).optional(),
