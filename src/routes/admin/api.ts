@@ -410,8 +410,16 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = await fastify.prisma.post.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ message: 'Post not found' });
 
+      const requestedLocale = rawBody && Object.prototype.hasOwnProperty.call(rawBody, 'locale') ? body.locale : existing.locale;
+      if (requestedLocale !== existing.locale) {
+        return reply.code(409).send({
+          message:
+            'Impossible de changer la langue d’un article existant. Crée une nouvelle traduction avec POST /admin-api/posts en réutilisant le translationGroupId source.'
+        });
+      }
+
       const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
-      const locale = rawBody && Object.prototype.hasOwnProperty.call(rawBody, 'locale') ? body.locale : existing.locale;
+      const locale = existing.locale;
       const providedTranslationGroupId = normalizeTranslationGroupId(body.translationGroupId);
       const translationGroupId = providedTranslationGroupId ?? existing.translationGroupId;
       const authorId = normalizeRequiredId(body.authorId);
