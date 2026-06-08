@@ -2,10 +2,22 @@ import { FastifyPluginAsync } from 'fastify';
 import { PostStatus, Prisma } from '@prisma/client';
 import { paginationQuerySchema } from '../../validation/common.js';
 import {
+  buildAuthorCanonical,
+  buildAuthorHreflang,
+  buildAuthorPath,
+  buildCategoryCanonical,
+  buildCategoryHreflang,
+  buildCategoryPath,
+  buildPageCanonical,
+  buildPageHreflang,
+  buildPagePath,
   buildPostCanonical,
   buildPostHreflang,
   buildPostPath,
   buildPostTranslations,
+  buildPostsIndexCanonical,
+  buildPostsIndexHreflang,
+  buildPostsIndexPath,
   isPostLocale
 } from '../../lib/seo/urls.js';
 
@@ -48,6 +60,32 @@ function parseLocaleQuery(query: unknown) {
   if (locale == null || locale === '') return { locale: 'en' as const };
   if (isPostLocale(locale)) return { locale };
   return { error: 'Locale invalide. Utilise "en" ou "fr".' };
+}
+
+function getLocalizedPageSeo(pageKey: string, locale: string) {
+  return {
+    path: buildPagePath(locale, pageKey),
+    canonicalUrl: buildPageCanonical(locale, pageKey),
+    hreflang: buildPageHreflang(pageKey)
+  };
+}
+
+function serializePublicCategory<T extends { slug: string }>(category: T, locale: string) {
+  return {
+    ...category,
+    path: buildCategoryPath(locale, category.slug),
+    canonicalUrl: buildCategoryCanonical(locale, category.slug),
+    hreflang: buildCategoryHreflang(category.slug)
+  };
+}
+
+function serializePublicAuthor<T extends { slug: string }>(author: T, locale: string) {
+  return {
+    ...author,
+    path: buildAuthorPath(locale, author.slug),
+    canonicalUrl: buildAuthorCanonical(locale, author.slug),
+    hreflang: buildAuthorHreflang(author.slug)
+  };
 }
 
 const serializePublicPost = (post: PublicPost, translations: PublicPostTranslation[] = []) => {
@@ -147,7 +185,15 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
 
     return {
       data: posts.map((post) => serializePublicPost(post, translationsByGroup.get(post.translationGroupId) ?? [])),
-      meta: { page, limit, total, totalPages: Math.ceil(total / limit) }
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        path: buildPostsIndexPath(parsedLocale.locale),
+        canonicalUrl: buildPostsIndexCanonical(parsedLocale.locale),
+        hreflang: buildPostsIndexHreflang()
+      }
     };
   });
 
@@ -185,12 +231,18 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: serializePublicPostDetail(post, translations, relatedPosts) };
   });
 
-  fastify.get('/categories', async () => {
+  fastify.get('/categories', async (request, reply) => {
+    const parsedLocale = parseLocaleQuery(request.query);
+    if ('error' in parsedLocale) return reply.code(400).send({ message: parsedLocale.error });
+
     const categories = await fastify.prisma.category.findMany({
       include: { seoMetadata: true, _count: { select: { posts: true } } },
       orderBy: { name: 'asc' }
     });
-    return { data: categories };
+    return {
+      data: categories.map((category) => serializePublicCategory(category, parsedLocale.locale)),
+      meta: getLocalizedPageSeo('categories', parsedLocale.locale)
+    };
   });
 
   fastify.get('/categories/:slug/posts', async (request, reply) => {
@@ -209,14 +261,25 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
 
     const translationsByGroup = await getTranslationsByGroup(fastify, posts.map((post) => post.translationGroupId));
 
-    return { data: { category, posts: posts.map((post) => serializePublicPost(post, translationsByGroup.get(post.translationGroupId) ?? [])) } };
+    return {
+      data: {
+        category: serializePublicCategory(category, parsedLocale.locale),
+        posts: posts.map((post) => serializePublicPost(post, translationsByGroup.get(post.translationGroupId) ?? []))
+      }
+    };
   });
 
-  fastify.get('/authors', async () => {
+  fastify.get('/authors', async (request, reply) => {
+    const parsedLocale = parseLocaleQuery(request.query);
+    if ('error' in parsedLocale) return reply.code(400).send({ message: parsedLocale.error });
+
     const authors = await fastify.prisma.author.findMany({
       include: { avatarMedia: true, seoMetadata: true, _count: { select: { posts: true } } }
     });
-    return { data: authors };
+    return {
+      data: authors.map((author) => serializePublicAuthor(author, parsedLocale.locale)),
+      meta: getLocalizedPageSeo('authors', parsedLocale.locale)
+    };
   });
 
   fastify.get('/authors/:slug/posts', async (request, reply) => {
@@ -235,13 +298,35 @@ export const publicRoutes: FastifyPluginAsync = async (fastify) => {
 
     const translationsByGroup = await getTranslationsByGroup(fastify, posts.map((post) => post.translationGroupId));
 
-    return { data: { author, posts: posts.map((post) => serializePublicPost(post, translationsByGroup.get(post.translationGroupId) ?? [])) } };
+    return {
+      data: {
+        author: serializePublicAuthor(author, parsedLocale.locale),
+        posts: posts.map((post) => serializePublicPost(post, translationsByGroup.get(post.translationGroupId) ?? []))
+      }
+    };
   });
 
   fastify.get('/seo/pages/:key', async (request, reply) => {
+    const parsedLocale = parseLocaleQuery(request.query);
+    if ('error' in parsedLocale) return reply.code(400).send({ message: parsedLocale.error });
+
     const key = (request.params as { key: string }).key;
-    const meta = await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: key } });
+    const localizedPageKey = `${parsedLocale.locale}:${key}`;
+    const meta =
+      (await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: localizedPageKey } })) ??
+      (await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: key } }));
     if (!meta) return reply.code(404).send({ message: 'SEO metadata not found' });
-    return { data: meta };
+
+    return {
+      data: {
+        ...meta,
+        locale: parsedLocale.locale,
+        pageKey: key,
+        localizedPageKey,
+        path: buildPagePath(parsedLocale.locale, key),
+        canonicalUrl: meta.pageKey === localizedPageKey ? meta.canonicalUrl ?? buildPageCanonical(parsedLocale.locale, key) : buildPageCanonical(parsedLocale.locale, key),
+        hreflang: buildPageHreflang(key)
+      }
+    };
   });
 };

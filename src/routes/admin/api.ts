@@ -8,7 +8,7 @@ import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
 import { requireAdminAuth, requireRole } from '../../lib/auth.js';
 import { deleteImageFromS3, ImageUploadError, S3StorageError, uploadImageToS3 } from '../../lib/storage/s3.js';
-import { buildPostCanonical, buildPostPath } from '../../lib/seo/urls.js';
+import { buildPostCanonical, buildPostPath, isPostLocale } from '../../lib/seo/urls.js';
 
 const pageSeoSchema = z.object({
   title: z.string().max(70).optional(),
@@ -52,6 +52,12 @@ function serializeAdminPost<T extends { locale: string; slug: string; translatio
     path: buildPostPath(post.locale, post.slug),
     canonicalUrl: buildPostCanonical(post.locale, post.slug)
   };
+}
+
+function getPageSeoKey(key: string, query: unknown): { pageKey: string; locale?: string } {
+  const locale = (query as { locale?: unknown }).locale;
+  if (!isPostLocale(locale)) return { pageKey: key };
+  return { pageKey: `${locale}:${key}`, locale };
 }
 
 async function ensurePostI18nAvailable(
@@ -410,15 +416,26 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       const existing = await fastify.prisma.post.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ message: 'Post not found' });
 
+      const requestedLocale = rawBody && Object.prototype.hasOwnProperty.call(rawBody, 'locale') ? body.locale : existing.locale;
+      const isTranslationSave = requestedLocale !== existing.locale;
+      const targetTranslation = isTranslationSave
+        ? await fastify.prisma.post.findFirst({
+            where: { translationGroupId: existing.translationGroupId, locale: requestedLocale }
+          })
+        : null;
+      const shouldCreateTranslation = isTranslationSave && !targetTranslation;
+      const targetPostId = targetTranslation?.id ?? id;
+      const targetPublishedAt = targetTranslation?.publishedAt ?? existing.publishedAt;
+
       const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
-      const locale = rawBody && Object.prototype.hasOwnProperty.call(rawBody, 'locale') ? body.locale : existing.locale;
+      const locale = requestedLocale;
       const providedTranslationGroupId = normalizeTranslationGroupId(body.translationGroupId);
-      const translationGroupId = providedTranslationGroupId ?? existing.translationGroupId;
+      const translationGroupId = isTranslationSave ? existing.translationGroupId : providedTranslationGroupId ?? existing.translationGroupId;
       const authorId = normalizeRequiredId(body.authorId);
       const categoryId = normalizeOptionalId(body.categoryId);
       const coverImageId = normalizeOptionalId(body.coverImageId);
       const tagIds = uniqueIds(body.tagIds.map((tagId) => tagId.trim()));
-      const relatedPostIds = uniqueIds(body.relatedPostIds.map((relatedId) => relatedId.trim())).filter((relatedId) => relatedId !== id);
+      const relatedPostIds = uniqueIds(body.relatedPostIds.map((relatedId) => relatedId.trim())).filter((relatedId) => relatedId !== id && relatedId !== targetPostId);
 
       const [author, category] = await Promise.all([
         fastify.prisma.author.findUnique({ where: { id: authorId }, select: { id: true } }),
@@ -443,67 +460,76 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ message: 'Un ou plusieurs articles liés sont introuvables côté API. Recharge la page et réessaie.' });
       }
 
-      if (providedTranslationGroupId && providedTranslationGroupId !== existing.translationGroupId) {
+      if (!isTranslationSave && providedTranslationGroupId && providedTranslationGroupId !== existing.translationGroupId) {
         const groupExists = await fastify.prisma.post.findFirst({ where: { translationGroupId }, select: { id: true } });
         if (!groupExists) return reply.code(400).send({ message: 'Groupe de traduction introuvable.' });
       }
 
-      const i18nConflict = await ensurePostI18nAvailable(fastify.prisma, { locale, slug, translationGroupId, excludePostId: id });
+      const i18nConflict = await ensurePostI18nAvailable(fastify.prisma, {
+        locale,
+        slug,
+        translationGroupId,
+        excludePostId: shouldCreateTranslation ? undefined : targetPostId
+      });
       if (i18nConflict) return reply.code(409).send({ message: i18nConflict });
 
-      const updated = await fastify.prisma.post.update({
-        where: { id },
-        data: {
-          title: body.title,
-          slug,
-          locale,
-          translationGroupId,
-          excerpt: body.excerpt,
-          contentMarkdown: body.contentHtml,
-          h1: normalizeOptionalText(body.h1),
-          chapoHtml: normalizeOptionalText(body.chapoHtml),
-          contentJson: body.contentJson as Prisma.InputJsonValue | undefined,
-          contentHtml: normalizeOptionalText(body.contentHtml),
-          faqJson: body.faqJson as Prisma.InputJsonValue | undefined,
-          heroImageUrl: normalizeOptionalText(body.heroImageUrl),
-          heroImageAlt: normalizeOptionalText(body.heroImageAlt),
-          metaTitle: normalizeOptionalText(body.metaTitle),
-          metaDescription: normalizeOptionalText(body.metaDescription),
-          canonicalUrl: normalizeOptionalText(body.canonicalUrl),
-          robots: normalizeOptionalText(body.robots) ?? 'noindex,follow',
-          isActive: body.isActive ?? false,
-          isIndexable: body.isIndexable ?? false,
-          categorySlug: body.categorySlug ? makeSlug(body.categorySlug) : undefined,
-          tagsJson: body.tagsJson as Prisma.InputJsonValue | undefined,
-          jsonLd: (body.jsonLd ?? undefined) as Prisma.InputJsonValue | undefined,
-          status: body.status,
-          publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? existing.publishedAt ?? new Date() : null,
-          readingTimeMinutes: body.readingTimeMinutes ?? undefined,
-          authorId,
-          categoryId,
-          coverImageId
-        }
-      });
+      const postData = {
+        title: body.title,
+        slug,
+        locale,
+        translationGroupId,
+        excerpt: body.excerpt,
+        contentMarkdown: body.contentHtml,
+        h1: normalizeOptionalText(body.h1),
+        chapoHtml: normalizeOptionalText(body.chapoHtml),
+        contentJson: body.contentJson as Prisma.InputJsonValue | undefined,
+        contentHtml: normalizeOptionalText(body.contentHtml),
+        faqJson: body.faqJson as Prisma.InputJsonValue | undefined,
+        heroImageUrl: normalizeOptionalText(body.heroImageUrl),
+        heroImageAlt: normalizeOptionalText(body.heroImageAlt),
+        metaTitle: normalizeOptionalText(body.metaTitle),
+        metaDescription: normalizeOptionalText(body.metaDescription),
+        canonicalUrl: normalizeOptionalText(body.canonicalUrl),
+        robots: normalizeOptionalText(body.robots) ?? 'noindex,follow',
+        isActive: body.isActive ?? false,
+        isIndexable: body.isIndexable ?? false,
+        categorySlug: body.categorySlug ? makeSlug(body.categorySlug) : undefined,
+        tagsJson: body.tagsJson as Prisma.InputJsonValue | undefined,
+        jsonLd: (body.jsonLd ?? undefined) as Prisma.InputJsonValue | undefined,
+        status: body.status,
+        publishedAt: body.publishedAt ? new Date(body.publishedAt) : body.status === PostStatus.PUBLISHED ? targetPublishedAt ?? new Date() : null,
+        readingTimeMinutes: body.readingTimeMinutes ?? undefined,
+        authorId,
+        categoryId,
+        coverImageId
+      };
 
-      await fastify.prisma.postTag.deleteMany({ where: { postId: id } });
+      const saved = shouldCreateTranslation
+        ? await fastify.prisma.post.create({ data: postData })
+        : await fastify.prisma.post.update({
+            where: { id: targetPostId },
+            data: postData
+          });
+
+      await fastify.prisma.postTag.deleteMany({ where: { postId: saved.id } });
       if (tagIds.length) {
         await fastify.prisma.postTag.createMany({
-          data: tagIds.map((tagId) => ({ postId: id, tagId })),
+          data: tagIds.map((tagId) => ({ postId: saved.id, tagId })),
           skipDuplicates: true
         });
       }
 
-      await fastify.prisma.postRelation.deleteMany({ where: { sourcePostId: id } });
+      await fastify.prisma.postRelation.deleteMany({ where: { sourcePostId: saved.id } });
       if (relatedPostIds.length) {
         await fastify.prisma.postRelation.createMany({
-          data: relatedPostIds.map((targetPostId) => ({ sourcePostId: id, targetPostId })),
+          data: relatedPostIds.map((targetPostId) => ({ sourcePostId: saved.id, targetPostId })),
           skipDuplicates: true
         });
       }
 
       if (body.seo) {
         await fastify.prisma.seoMetadata.upsert({
-          where: { postId: id },
+          where: { postId: saved.id },
           update: {
             title: body.seo.title || undefined,
             description: body.seo.description || undefined,
@@ -513,7 +539,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           },
           create: {
             entityType: SeoEntityType.POST,
-            postId: id,
+            postId: saved.id,
             title: body.seo.title || undefined,
             description: body.seo.description || undefined,
             canonicalUrl: body.seo.canonicalUrl || undefined,
@@ -523,7 +549,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      return { data: serializeAdminPost(updated) };
+      return { data: serializeAdminPost(saved) };
     });
 
     protectedScope.delete('/posts/:id', async (request) => {
@@ -812,26 +838,27 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
 
     protectedScope.get('/seo/page/:key', async (request) => {
       const key = (request.params as { key: string }).key;
-      return {
-        data: await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: key }, include: { openGraphImage: true } })
-      };
+      const { pageKey, locale } = getPageSeoKey(key, request.query);
+      const data = await fastify.prisma.seoMetadata.findUnique({ where: { pageKey }, include: { openGraphImage: true } });
+      return { data: data ? { ...data, pageKey: key, localizedPageKey: pageKey, locale } : null };
     });
 
     protectedScope.put('/seo/page/:key', async (request) => {
       const key = (request.params as { key: string }).key;
+      const { pageKey, locale } = getPageSeoKey(key, request.query);
       const body = pageSeoSchema.parse(request.body);
-      return {
-        data: await fastify.prisma.seoMetadata.upsert({
-          where: { pageKey: key },
-          update: { ...body, entityType: SeoEntityType.PAGE },
-          create: { ...body, pageKey: key, entityType: SeoEntityType.PAGE }
-        })
-      };
+      const data = await fastify.prisma.seoMetadata.upsert({
+        where: { pageKey },
+        update: { ...body, entityType: SeoEntityType.PAGE },
+        create: { ...body, pageKey, entityType: SeoEntityType.PAGE }
+      });
+      return { data: { ...data, pageKey: key, localizedPageKey: pageKey, locale } };
     });
     protectedScope.delete('/seo/page/:key', async (request, reply) => {
       try {
         const key = (request.params as { key: string }).key;
-        return { data: await fastify.prisma.seoMetadata.delete({ where: { pageKey: key } }) };
+        const { pageKey } = getPageSeoKey(key, request.query);
+        return { data: await fastify.prisma.seoMetadata.delete({ where: { pageKey } }) };
       } catch {
         return reply.code(404).send({ message: 'SEO metadata not found' });
       }
