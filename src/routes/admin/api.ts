@@ -8,7 +8,7 @@ import { makeSlug } from '../../lib/slug.js';
 import { authorSchema, categorySchema, createUserSchema, loginSchema, mediaSchema, postSchema, tagSchema } from '../../validation/admin.js';
 import { requireAdminAuth, requireRole } from '../../lib/auth.js';
 import { deleteImageFromS3, ImageUploadError, S3StorageError, uploadImageToS3 } from '../../lib/storage/s3.js';
-import { buildPostCanonical, buildPostPath } from '../../lib/seo/urls.js';
+import { buildPostCanonical, buildPostPath, isPostLocale } from '../../lib/seo/urls.js';
 
 const pageSeoSchema = z.object({
   title: z.string().max(70).optional(),
@@ -52,6 +52,12 @@ function serializeAdminPost<T extends { locale: string; slug: string; translatio
     path: buildPostPath(post.locale, post.slug),
     canonicalUrl: buildPostCanonical(post.locale, post.slug)
   };
+}
+
+function getPageSeoKey(key: string, query: unknown): { pageKey: string; locale?: string } {
+  const locale = (query as { locale?: unknown }).locale;
+  if (!isPostLocale(locale)) return { pageKey: key };
+  return { pageKey: `${locale}:${key}`, locale };
 }
 
 async function ensurePostI18nAvailable(
@@ -832,26 +838,27 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
 
     protectedScope.get('/seo/page/:key', async (request) => {
       const key = (request.params as { key: string }).key;
-      return {
-        data: await fastify.prisma.seoMetadata.findUnique({ where: { pageKey: key }, include: { openGraphImage: true } })
-      };
+      const { pageKey, locale } = getPageSeoKey(key, request.query);
+      const data = await fastify.prisma.seoMetadata.findUnique({ where: { pageKey }, include: { openGraphImage: true } });
+      return { data: data ? { ...data, pageKey: key, localizedPageKey: pageKey, locale } : null };
     });
 
     protectedScope.put('/seo/page/:key', async (request) => {
       const key = (request.params as { key: string }).key;
+      const { pageKey, locale } = getPageSeoKey(key, request.query);
       const body = pageSeoSchema.parse(request.body);
-      return {
-        data: await fastify.prisma.seoMetadata.upsert({
-          where: { pageKey: key },
-          update: { ...body, entityType: SeoEntityType.PAGE },
-          create: { ...body, pageKey: key, entityType: SeoEntityType.PAGE }
-        })
-      };
+      const data = await fastify.prisma.seoMetadata.upsert({
+        where: { pageKey },
+        update: { ...body, entityType: SeoEntityType.PAGE },
+        create: { ...body, pageKey, entityType: SeoEntityType.PAGE }
+      });
+      return { data: { ...data, pageKey: key, localizedPageKey: pageKey, locale } };
     });
     protectedScope.delete('/seo/page/:key', async (request, reply) => {
       try {
         const key = (request.params as { key: string }).key;
-        return { data: await fastify.prisma.seoMetadata.delete({ where: { pageKey: key } }) };
+        const { pageKey } = getPageSeoKey(key, request.query);
+        return { data: await fastify.prisma.seoMetadata.delete({ where: { pageKey } }) };
       } catch {
         return reply.code(404).send({ message: 'SEO metadata not found' });
       }
