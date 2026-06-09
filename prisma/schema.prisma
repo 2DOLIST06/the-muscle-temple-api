@@ -25,6 +25,18 @@ enum SeoEntityType {
   PAGE
 }
 
+model NewsletterSubscriber {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  source             String?
+  userAgent          String?
+  notificationSentAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([createdAt])
+}
+
 model User {
   id             String   @id @default(cuid())
   email          String   @unique

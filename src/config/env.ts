@@ -15,7 +15,14 @@ const envSchema = z.object({
   AWS_CLOUDFRONT_URL: z.string().url().optional(),
   AWS_S3_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
   ADMIN_EMAIL: z.string().email().optional(),
-  ADMIN_PASSWORD: z.string().min(10).optional()
+  ADMIN_PASSWORD: z.string().min(10).optional(),
+  SMTP_SERVER: z.string().min(1).optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USERNAME: z.string().min(1).optional(),
+  SMTP_PASSWORD: z.string().min(1).optional(),
+  SMTP_EHLO_DOMAIN: z.string().min(1).default('the-muscle-temple-api'),
+  MAIL_FROM: z.string().email().optional(),
+  NEWSLETTER_RECIPIENT_EMAIL: z.string().email().default('contact@2dolist.fr')
 });
 
 const parsed = envSchema.parse(process.env);
