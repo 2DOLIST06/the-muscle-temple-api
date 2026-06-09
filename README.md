@@ -44,6 +44,9 @@ Variables nécessaires:
 - `APP_URL`
 - `ADMIN_EMAIL` (seed)
 - `ADMIN_PASSWORD` (seed)
+- `SMTP_SERVER` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM` pour envoyer les notifications SMTP de newsletter
+- `SMTP_EHLO_DOMAIN` (optionnel, par défaut `the-muscle-temple-api`)
+- `NEWSLETTER_RECIPIENT_EMAIL` (par défaut `contact@2dolist.fr`)
 
 Exemple multi-origines:
 ```env
@@ -70,6 +73,7 @@ npm run dev
 
 ## Endpoints publics (`/api`)
 - `GET /api/health`
+- `POST /api/newsletter` avec `{ "email": "abonne@example.com", "source": "footer" }` : enregistre l’adresse en base puis envoie une notification d’inscription à `NEWSLETTER_RECIPIENT_EMAIL` via le serveur SMTP configuré (reprise automatique si une notification précédente a échoué)
 - `GET /api/posts`
 - `GET /api/posts/:slug`
 - `GET /api/categories`
@@ -81,6 +85,7 @@ npm run dev
 ## Endpoints admin (`/admin-api`)
 - Auth: `POST /admin-api/auth/login`
 - Dashboard: `GET /admin-api/dashboard`
+- Newsletter: `GET /admin-api/newsletter-subscribers` pour récupérer la liste des inscrits enregistrés en base
 - CRUD: posts / categories / authors
 - Supporting: CRUD tags / CRUD media / upload media S3 (`POST /admin-api/media/upload`) / page SEO (GET, PUT, DELETE)
 
@@ -118,6 +123,7 @@ Variables Render obligatoires:
 - `JWT_SECRET`
 - `APP_URL`
 - `CORS_ORIGIN`
+- `SMTP_SERVER` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM`
 
 ## Notes de solidité
 - `dotenv/config` est chargé au boot serveur et pour le seed.

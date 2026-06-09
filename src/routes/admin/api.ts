@@ -255,6 +255,13 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       });
     });
 
+    protectedScope.get('/newsletter-subscribers', async () => {
+      const subscribers = await fastify.prisma.newsletterSubscriber.findMany({
+        orderBy: { createdAt: 'desc' }
+      });
+      return { data: subscribers };
+    });
+
     protectedScope.get('/posts', async () => {
       const posts = await fastify.prisma.post.findMany({
         include: {
