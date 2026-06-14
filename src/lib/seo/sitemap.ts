@@ -133,8 +133,6 @@ export async function buildSitemapXml(prisma: PrismaClient, locale: PostLocale):
   return renderSitemap(dedupeEntries([...staticEntries, ...seoPageEntries, ...postEntries, ...categoryEntries]));
 }
 
-export function buildRobotsTxt(locale: PostLocale): string {
-  const sitemapUrl = locale === 'fr' ? `${SITE_BASE_URL}/fr/sitemap.xml` : `${SITE_BASE_URL}/sitemap.xml`;
-
-  return ['User-agent: *', 'Allow: /', `Sitemap: ${sitemapUrl}`, ''].join('\n');
+export function buildRobotsTxt(): string {
+  return ['User-agent: *', 'Allow: /', `Sitemap: ${SITE_BASE_URL}/sitemap.xml`, `Sitemap: ${SITE_BASE_URL}/fr/sitemap.xml`, ''].join('\n');
 }

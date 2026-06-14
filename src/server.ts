@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import Fastify, { FastifyPluginCallback } from 'fastify';
+import Fastify, { FastifyPluginCallback, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
@@ -38,27 +38,32 @@ app.register(multipart, {
   }
 });
 
-app.get('/sitemap.xml', async (_request, reply) => {
+const sendEnglishSitemap = async (_request: unknown, reply: FastifyReply) => {
   const sitemap = await buildSitemapXml(prisma, 'en');
 
   return reply
     .header('Content-Type', 'application/xml; charset=utf-8')
     .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
     .send(sitemap);
-});
+};
 
-app.get('/fr/sitemap.xml', async (_request, reply) => {
+const sendFrenchSitemap = async (_request: unknown, reply: FastifyReply) => {
   const sitemap = await buildSitemapXml(prisma, 'fr');
 
   return reply
     .header('Content-Type', 'application/xml; charset=utf-8')
     .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
     .send(sitemap);
-});
+};
 
-app.get('/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt('en')));
+app.get('/sitemap.xml', sendEnglishSitemap);
+app.get('/sitemap', sendEnglishSitemap);
+app.get('/fr/sitemap.xml', sendFrenchSitemap);
+app.get('/fr/sitemap', sendFrenchSitemap);
 
-app.get('/fr/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt('fr')));
+app.get('/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt()));
+
+app.get('/fr/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt()));
 
 app.register(publicRoutes, { prefix: '/api' });
 app.register(adminApiRoutes, { prefix: '/admin-api' });
