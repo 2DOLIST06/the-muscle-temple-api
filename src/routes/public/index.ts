@@ -22,6 +22,7 @@ import {
   isPostLocale
 } from '../../lib/seo/urls.js';
 import { sendNewsletterSubscriptionEmail } from '../../lib/email/newsletter.js';
+import { buildRobotsTxt, buildSitemapXml } from '../../lib/seo/sitemap.js';
 
 const newsletterSubscriptionSchema = z.object({
   email: z.string().trim().toLowerCase().email('Adresse e-mail invalide.'),
@@ -167,6 +168,32 @@ async function getTranslationsByGroup(fastify: Parameters<FastifyPluginAsync>[0]
 
 export const publicRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/health', async () => ({ ok: true }));
+
+  fastify.get('/sitemap.xml', async (_request, reply) => {
+    const sitemap = await buildSitemapXml(fastify.prisma, 'en');
+
+    return reply
+      .header('Content-Type', 'application/xml; charset=utf-8')
+      .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
+      .send(sitemap);
+  });
+
+  fastify.get('/fr/sitemap.xml', async (_request, reply) => {
+    const sitemap = await buildSitemapXml(fastify.prisma, 'fr');
+
+    return reply
+      .header('Content-Type', 'application/xml; charset=utf-8')
+      .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
+      .send(sitemap);
+  });
+
+  fastify.get('/robots.txt', async (_request, reply) =>
+    reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt('en'))
+  );
+
+  fastify.get('/fr/robots.txt', async (_request, reply) =>
+    reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt('fr'))
+  );
 
   fastify.post('/newsletter', async (request, reply) => {
     const subscription = newsletterSubscriptionSchema.parse(request.body);
