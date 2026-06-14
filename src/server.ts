@@ -9,6 +9,7 @@ import { prisma } from './db/client.js';
 import { publicRoutes } from './routes/public/index.js';
 import { adminApiRoutes } from './routes/admin/api.js';
 import { adminPanelRoutes } from './routes/admin/panel.js';
+import { buildSitemapXml } from './lib/seo/sitemap.js';
 
 const MULTIPART_PACKAGE = '@fastify/multipart';
 const { default: multipart } = (await import(MULTIPART_PACKAGE)) as {
@@ -35,6 +36,15 @@ app.register(multipart, {
     files: 1,
     fileSize: env.AWS_S3_UPLOAD_MAX_BYTES
   }
+});
+
+app.get('/sitemap.xml', async (_request, reply) => {
+  const sitemap = await buildSitemapXml(prisma);
+
+  return reply
+    .header('Content-Type', 'application/xml; charset=utf-8')
+    .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
+    .send(sitemap);
 });
 
 app.register(publicRoutes, { prefix: '/api' });
