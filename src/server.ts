@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import Fastify, { FastifyPluginCallback } from 'fastify';
+import Fastify, { FastifyPluginCallback, FastifyReply } from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
@@ -9,6 +9,7 @@ import { prisma } from './db/client.js';
 import { publicRoutes } from './routes/public/index.js';
 import { adminApiRoutes } from './routes/admin/api.js';
 import { adminPanelRoutes } from './routes/admin/panel.js';
+import { buildRobotsTxt, buildSitemapXml } from './lib/seo/sitemap.js';
 
 const MULTIPART_PACKAGE = '@fastify/multipart';
 const { default: multipart } = (await import(MULTIPART_PACKAGE)) as {
@@ -36,6 +37,33 @@ app.register(multipart, {
     fileSize: env.AWS_S3_UPLOAD_MAX_BYTES
   }
 });
+
+const sendEnglishSitemap = async (_request: unknown, reply: FastifyReply) => {
+  const sitemap = await buildSitemapXml(prisma, 'en');
+
+  return reply
+    .header('Content-Type', 'application/xml; charset=utf-8')
+    .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
+    .send(sitemap);
+};
+
+const sendFrenchSitemap = async (_request: unknown, reply: FastifyReply) => {
+  const sitemap = await buildSitemapXml(prisma, 'fr');
+
+  return reply
+    .header('Content-Type', 'application/xml; charset=utf-8')
+    .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
+    .send(sitemap);
+};
+
+app.get('/sitemap.xml', sendEnglishSitemap);
+app.get('/sitemap', sendEnglishSitemap);
+app.get('/fr/sitemap.xml', sendFrenchSitemap);
+app.get('/fr/sitemap', sendFrenchSitemap);
+
+app.get('/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt()));
+
+app.get('/fr/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt()));
 
 app.register(publicRoutes, { prefix: '/api' });
 app.register(adminApiRoutes, { prefix: '/admin-api' });
