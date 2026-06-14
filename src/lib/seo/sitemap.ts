@@ -1,12 +1,12 @@
-import { PostStatus } from '@prisma/client';
+import { PostStatus, SeoEntityType } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import {
   SITE_BASE_URL,
-  SUPPORTED_POST_LOCALES,
-  buildAuthorCanonical,
   buildCategoryCanonical,
   buildPageCanonical,
-  buildPostCanonical
+  buildPostCanonical,
+  isPostLocale,
+  type PostLocale
 } from './urls.js';
 
 type SitemapEntry = {
@@ -16,7 +16,7 @@ type SitemapEntry = {
   priority?: number;
 };
 
-const STATIC_PAGE_KEYS = ['home', 'articles', 'categories', 'authors'] as const;
+const STATIC_PAGE_KEYS = ['home', 'articles', 'categories', 'about', 'contact'] as const;
 
 function escapeXml(value: string): string {
   return value
@@ -45,19 +45,49 @@ function renderSitemap(entries: SitemapEntry[]): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.map(renderSitemapEntry).join('\n')}\n</urlset>\n`;
 }
 
-export async function buildSitemapXml(prisma: PrismaClient): Promise<string> {
+function normalizePageKey(pageKey: string, locale: PostLocale): string | null {
+  const [maybeLocale, ...parts] = pageKey.split(':');
+  if (parts.length > 0) {
+    if (maybeLocale !== locale || !isPostLocale(maybeLocale)) return null;
+    return parts.join(':');
+  }
+
+  return pageKey;
+}
+
+function dedupeEntries(entries: SitemapEntry[]): SitemapEntry[] {
+  const byLocation = new Map<string, SitemapEntry>();
+
+  for (const entry of entries) {
+    if (!entry.loc.startsWith(SITE_BASE_URL)) continue;
+    const existing = byLocation.get(entry.loc);
+    if (!existing) {
+      byLocation.set(entry.loc, entry);
+      continue;
+    }
+
+    const existingLastmod = existing.lastmod ? new Date(existing.lastmod).getTime() : 0;
+    const nextLastmod = entry.lastmod ? new Date(entry.lastmod).getTime() : 0;
+    if (nextLastmod > existingLastmod) byLocation.set(entry.loc, { ...existing, lastmod: entry.lastmod });
+  }
+
+  return [...byLocation.values()];
+}
+
+export async function buildSitemapXml(prisma: PrismaClient, locale: PostLocale): Promise<string> {
   const now = new Date();
   const indexablePostWhere = {
+    locale,
     status: PostStatus.PUBLISHED,
     isActive: true,
     isIndexable: true,
     publishedAt: { lte: now }
   };
 
-  const [posts, categories, authors] = await Promise.all([
+  const [posts, categories, seoPages] = await Promise.all([
     prisma.post.findMany({
       where: indexablePostWhere,
-      select: { locale: true, slug: true, updatedAt: true, publishedAt: true },
+      select: { slug: true, updatedAt: true, publishedAt: true },
       orderBy: [{ publishedAt: 'desc' }]
     }),
     prisma.category.findMany({
@@ -65,47 +95,46 @@ export async function buildSitemapXml(prisma: PrismaClient): Promise<string> {
       select: { slug: true, updatedAt: true },
       orderBy: { slug: 'asc' }
     }),
-    prisma.author.findMany({
-      where: { posts: { some: indexablePostWhere } },
-      select: { slug: true, updatedAt: true },
-      orderBy: { slug: 'asc' }
+    prisma.seoMetadata.findMany({
+      where: { entityType: SeoEntityType.PAGE, noIndex: false, pageKey: { not: null } },
+      select: { pageKey: true, updatedAt: true },
+      orderBy: { pageKey: 'asc' }
     })
   ]);
 
-  const staticEntries: SitemapEntry[] = SUPPORTED_POST_LOCALES.flatMap((locale) =>
-    STATIC_PAGE_KEYS.map((pageKey) => ({
-      loc: buildPageCanonical(locale, pageKey),
-      changefreq: pageKey === 'home' || pageKey === 'articles' ? 'daily' : 'weekly',
-      priority: pageKey === 'home' ? 1 : 0.8
-    }))
-  );
+  const staticEntries: SitemapEntry[] = STATIC_PAGE_KEYS.map((pageKey) => ({
+    loc: buildPageCanonical(locale, pageKey),
+    changefreq: pageKey === 'home' || pageKey === 'articles' ? 'daily' : 'weekly',
+    priority: pageKey === 'home' ? 1 : 0.8
+  }));
+
+  const seoPageEntries: SitemapEntry[] = seoPages.flatMap((page) => {
+    if (!page.pageKey) return [];
+    const pageKey = normalizePageKey(page.pageKey, locale);
+    if (!pageKey || pageKey === 'authors') return [];
+
+    return [{ loc: buildPageCanonical(locale, pageKey), lastmod: page.updatedAt, changefreq: 'weekly', priority: pageKey === 'home' ? 1 : 0.8 }];
+  });
 
   const postEntries: SitemapEntry[] = posts.map((post) => ({
-    loc: buildPostCanonical(post.locale, post.slug),
+    loc: buildPostCanonical(locale, post.slug),
     lastmod: post.updatedAt ?? post.publishedAt,
     changefreq: 'monthly',
     priority: 0.7
   }));
 
-  const categoryEntries: SitemapEntry[] = SUPPORTED_POST_LOCALES.flatMap((locale) =>
-    categories.map((category) => ({
-      loc: buildCategoryCanonical(locale, category.slug),
-      lastmod: category.updatedAt,
-      changefreq: 'weekly',
-      priority: 0.6
-    }))
-  );
+  const categoryEntries: SitemapEntry[] = categories.map((category) => ({
+    loc: buildCategoryCanonical(locale, category.slug),
+    lastmod: category.updatedAt,
+    changefreq: 'weekly',
+    priority: 0.6
+  }));
 
-  const authorEntries: SitemapEntry[] = SUPPORTED_POST_LOCALES.flatMap((locale) =>
-    authors.map((author) => ({
-      loc: buildAuthorCanonical(locale, author.slug),
-      lastmod: author.updatedAt,
-      changefreq: 'monthly',
-      priority: 0.5
-    }))
-  );
+  return renderSitemap(dedupeEntries([...staticEntries, ...seoPageEntries, ...postEntries, ...categoryEntries]));
+}
 
-  const entries = [...staticEntries, ...postEntries, ...categoryEntries, ...authorEntries].filter((entry) => entry.loc.startsWith(SITE_BASE_URL));
+export function buildRobotsTxt(locale: PostLocale): string {
+  const sitemapUrl = locale === 'fr' ? `${SITE_BASE_URL}/fr/sitemap.xml` : `${SITE_BASE_URL}/sitemap.xml`;
 
-  return renderSitemap(entries);
+  return ['User-agent: *', 'Allow: /', `Sitemap: ${sitemapUrl}`, ''].join('\n');
 }

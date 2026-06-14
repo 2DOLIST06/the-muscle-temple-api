@@ -9,7 +9,7 @@ import { prisma } from './db/client.js';
 import { publicRoutes } from './routes/public/index.js';
 import { adminApiRoutes } from './routes/admin/api.js';
 import { adminPanelRoutes } from './routes/admin/panel.js';
-import { buildSitemapXml } from './lib/seo/sitemap.js';
+import { buildRobotsTxt, buildSitemapXml } from './lib/seo/sitemap.js';
 
 const MULTIPART_PACKAGE = '@fastify/multipart';
 const { default: multipart } = (await import(MULTIPART_PACKAGE)) as {
@@ -39,13 +39,26 @@ app.register(multipart, {
 });
 
 app.get('/sitemap.xml', async (_request, reply) => {
-  const sitemap = await buildSitemapXml(prisma);
+  const sitemap = await buildSitemapXml(prisma, 'en');
 
   return reply
     .header('Content-Type', 'application/xml; charset=utf-8')
     .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
     .send(sitemap);
 });
+
+app.get('/fr/sitemap.xml', async (_request, reply) => {
+  const sitemap = await buildSitemapXml(prisma, 'fr');
+
+  return reply
+    .header('Content-Type', 'application/xml; charset=utf-8')
+    .header('Cache-Control', 'public, max-age=0, s-maxage=3600')
+    .send(sitemap);
+});
+
+app.get('/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt('en')));
+
+app.get('/fr/robots.txt', async (_request, reply) => reply.header('Content-Type', 'text/plain; charset=utf-8').send(buildRobotsTxt('fr')));
 
 app.register(publicRoutes, { prefix: '/api' });
 app.register(adminApiRoutes, { prefix: '/admin-api' });
