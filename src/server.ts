@@ -17,14 +17,15 @@ const { default: multipart } = (await import(MULTIPART_PACKAGE)) as {
 };
 
 const app = Fastify({ logger: true });
+const productionCorsOrigins = ['https://bodytrainingguide.com'];
 
 app.decorate('prisma', prisma);
 
 app.register(cors, {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (env.corsOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('Origin not allowed by CORS'), false);
+    if (productionCorsOrigins.includes(origin) || env.corsOrigins.includes(origin)) return callback(null, true);
+    callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   credentials: true
