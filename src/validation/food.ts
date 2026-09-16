@@ -21,6 +21,10 @@ export const barcodeParamSchema = z.object({
 });
 
 export const foodSearchQuerySchema = z.object({
-  q: z.string().trim().min(2, 'La recherche doit contenir au moins 2 caractères.').max(100, 'La recherche ne peut pas dépasser 100 caractères.'),
+  q: z.string()
+    .trim()
+    .min(2, 'La recherche doit contenir au moins 2 caractères.')
+    .max(100, 'La recherche ne peut pas dépasser 100 caractères.')
+    .transform((value) => value.toLocaleLowerCase('fr-FR')),
   limit: z.coerce.number().int().positive().max(20).default(10)
 });
