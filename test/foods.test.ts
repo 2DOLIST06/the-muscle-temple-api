@@ -121,6 +121,98 @@ test('product request asks Open Food Facts for nutrition and image fields', asyn
   });
 });
 
+test('search uses Search-a-licious full-text search and normalizes its products', async () => {
+  let requestedUrl: URL | undefined;
+  let diagnostic: Record<string, unknown> | undefined;
+  const fetchMock = (async (input: string | URL | Request) => {
+    requestedUrl = new URL(input instanceof Request ? input.url : input.toString());
+    return new Response(JSON.stringify({
+      count: 1,
+      page: 1,
+      page_size: 2,
+      hits: [{
+        _source: {
+          code: '3017620422003',
+          product_name: 'Nutella',
+          brands: 'Ferrero',
+          quantity: '1 kg',
+          image_front_url: 'https://images.example/nutella.jpg'
+        }
+      }]
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  const service = new OpenFoodFactsService('test-agent', 1_000, fetchMock, (details) => { diagnostic = details; });
+
+  const products = await service.searchProducts('nutella', 2);
+  assert.equal(requestedUrl?.origin, 'https://search.openfoodfacts.org');
+  assert.equal(requestedUrl?.pathname, '/search');
+  assert.equal(requestedUrl?.searchParams.get('q'), 'nutella');
+  assert.equal(requestedUrl?.searchParams.get('page'), '1');
+  assert.equal(requestedUrl?.searchParams.get('page_size'), '2');
+  assert.equal(requestedUrl?.searchParams.get('fields'), 'code,product_name,brands,image_front_url,image_url,quantity');
+  assert.equal(requestedUrl?.searchParams.has('search_terms'), false);
+  assert.deepEqual(products, [{
+    barcode: '3017620422003',
+    name: 'Nutella',
+    brand: 'Ferrero',
+    image: 'https://images.example/nutella.jpg',
+    quantityLabel: '1 kg',
+    source: 'open_food_facts',
+    sourceUrl: 'https://world.openfoodfacts.org/product/3017620422003'
+  }]);
+  assert.equal('nutrition' in products[0]!, false);
+  assert.equal(diagnostic?.operation, 'search');
+  assert.equal(diagnostic?.status, 200);
+  assert.deepEqual(diagnostic?.responseKeys, ['count', 'page', 'page_size', 'hits']);
+});
+
+test('search rejects an unexpected Open Food Facts response instead of reporting no results', async () => {
+  let diagnostic: Record<string, unknown> | undefined;
+  const fetchMock = (async () => new Response(JSON.stringify({ results: [] }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  })) as typeof fetch;
+  const service = new OpenFoodFactsService('test-agent', 1_000, fetchMock, (details) => { diagnostic = details; });
+
+  await assert.rejects(() => service.searchProducts('orange', 10), FoodDataProviderUnavailableError);
+  assert.deepEqual(diagnostic, {
+    operation: 'search',
+    endpoint: 'https://search.openfoodfacts.org/search',
+    responseKeys: ['results'],
+    hitsType: 'undefined',
+    productsType: 'undefined'
+  });
+});
+
+test('search diagnostics expose provider HTTP errors and network timeouts', async (t) => {
+  await t.test('HTTP error body', async () => {
+    const diagnostics: Record<string, unknown>[] = [];
+    const fetchMock = (async () => new Response('{"detail":"invalid fields"}', {
+      status: 422,
+      headers: { 'Content-Type': 'application/json' }
+    })) as typeof fetch;
+    const service = new OpenFoodFactsService('test-agent', 1_000, fetchMock, (details) => { diagnostics.push(details); });
+
+    await assert.rejects(() => service.searchProducts('nutella', 10), FoodDataProviderUnavailableError);
+    assert.equal(diagnostics[0]?.status, 422);
+    assert.equal(diagnostics[0]?.responseBody, '{"detail":"invalid fields"}');
+    assert.equal((diagnostics[0]?.parameters as Record<string, string>).q, 'nutella');
+  });
+
+  await t.test('network timeout', async () => {
+    let diagnostic: Record<string, unknown> | undefined;
+    const timeout = new Error('The operation was aborted due to timeout');
+    timeout.name = 'TimeoutError';
+    const fetchMock = (async () => { throw timeout; }) as typeof fetch;
+    const service = new OpenFoodFactsService('test-agent', 250, fetchMock, (details) => { diagnostic = details; });
+
+    await assert.rejects(() => service.searchProducts('skyr', 10), FoodDataProviderUnavailableError);
+    assert.equal(diagnostic?.timedOut, true);
+    assert.equal(diagnostic?.timeoutMs, 250);
+    assert.equal(diagnostic?.errorMessage, 'The operation was aborted due to timeout');
+  });
+});
+
 test('valid cached product avoids a provider call', async () => {
   let calls = 0;
   const app = buildApp({
@@ -184,7 +276,7 @@ test('barcode endpoint returns validation, not-found, and provider errors distin
   });
 });
 
-test('search trims input, normalizes response envelope, and enforces the requested limit', async () => {
+test('search trims and lowercases input, normalizes response envelope, and enforces the requested limit', async () => {
   let received: [string, number] | undefined;
   const result = {
     barcode: completeProduct.barcode, name: completeProduct.name, brand: completeProduct.brand,
@@ -198,11 +290,29 @@ test('search trims input, normalizes response envelope, and enforces the request
     },
     cache: { async get() { return null; }, async set() {} }
   });
-  const response = await app.inject({ method: 'GET', url: '/foods/search?q=%20boisson%20&limit=2' });
+  const response = await app.inject({ method: 'GET', url: '/foods/search?q=%20BOISSON%20&limit=2' });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(received, ['boisson', 2]);
   assert.equal(response.json().data.length, 2);
   assert.equal(response.json().data[0].nutrition, undefined);
+  await app.close();
+});
+
+test('nutrition search handles case consistently and rejects a too-short query', async () => {
+  const received: string[] = [];
+  const app = buildApp({
+    provider: {
+      async getProductByBarcode() { return completeProduct; },
+      async searchProducts(query) { received.push(query); return []; }
+    },
+    cache: { async get() { return null; }, async set() {} }
+  }, '/api');
+
+  for (const query of ['nutella', 'Nutella', 'NUTELLA', '%20%20Nutella%20%20']) {
+    assert.equal((await app.inject({ method: 'GET', url: `/api/nutrition/search?query=${query}` })).statusCode, 200);
+  }
+  assert.deepEqual(received, ['nutella', 'nutella', 'nutella', 'nutella']);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/nutrition/search?query=a' })).statusCode, 400);
   await app.close();
 });
 

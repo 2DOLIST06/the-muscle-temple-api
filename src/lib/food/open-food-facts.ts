@@ -1,14 +1,14 @@
 import { FoodNutrition, FoodProduct, FoodSearchResult, NutritionUnit } from './types.js';
 
 const API_BASE_URL = 'https://world.openfoodfacts.org';
+const SEARCH_API_BASE_URL = 'https://search.openfoodfacts.org';
 const PRODUCT_FIELDS = [
   'code', 'product_name', 'generic_name', 'brands', 'quantity', 'serving_size',
   'nutrition_data_per', 'product_quantity_unit', 'nutriments', 'selected_images',
   'image_url', 'image_front_url', 'image_small_url', 'image_thumb_url'
 ].join(',');
 const SEARCH_FIELDS = [
-  'code', 'product_name', 'generic_name', 'brands', 'quantity', 'selected_images',
-  'image_url', 'image_front_url', 'image_small_url', 'image_thumb_url'
+  'code', 'product_name', 'brands', 'image_front_url', 'image_url', 'quantity'
 ].join(',');
 const DIAGNOSTIC_BARCODE = '3017624010701';
 
@@ -73,6 +73,21 @@ function sourceUrl(barcode: string) {
   return `${API_BASE_URL}/product/${encodeURIComponent(barcode)}`;
 }
 
+function searchHits(payload: UnknownRecord): unknown[] | null {
+  if (Array.isArray(payload.hits)) return payload.hits;
+  if (Array.isArray(payload.products)) return payload.products;
+
+  // Search-a-licious may expose the native Elasticsearch envelope. Keep this
+  // transport detail out of the normalized API response.
+  const nestedHits = record(payload.hits).hits;
+  return Array.isArray(nestedHits) ? nestedHits : null;
+}
+
+function searchHitProduct(hit: unknown): unknown {
+  const value = record(hit);
+  return value._source ?? value.document ?? hit;
+}
+
 export function normalizeProduct(raw: unknown, fallbackBarcode: string): FoodProduct {
   const product = record(raw);
   const nutriments = record(product.nutriments);
@@ -128,17 +143,64 @@ export class OpenFoodFactsService {
     private readonly diagnosticLogger?: (details: UnknownRecord) => void
   ) {}
 
-  private async request(url: URL, notFoundOn404 = false) {
+  private async request(url: URL, notFoundOn404 = false, operation?: 'search') {
+    const startedAt = Date.now();
     try {
       const response = await this.fetchImplementation(url, {
         headers: { Accept: 'application/json', 'User-Agent': this.userAgent },
         signal: AbortSignal.timeout(this.timeoutMs)
       });
       if (response.status === 404 && notFoundOn404) throw new ProductNotFoundError();
-      if (!response.ok) throw new FoodDataProviderUnavailableError();
-      return await response.json() as unknown;
+      const responseBody = await response.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(responseBody) as unknown;
+      } catch (error) {
+        if (operation) {
+          this.diagnosticLogger?.({
+            operation,
+            url: url.toString(),
+            parameters: Object.fromEntries(url.searchParams),
+            status: response.status,
+            responseBody: responseBody.slice(0, 4_000),
+            elapsedMs: Date.now() - startedAt,
+            timeoutMs: this.timeoutMs,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        throw error;
+      }
+      if (operation) {
+        this.diagnosticLogger?.({
+          operation,
+          url: url.toString(),
+          parameters: Object.fromEntries(url.searchParams),
+          status: response.status,
+          responseType: Array.isArray(payload) ? 'array' : typeof payload,
+          responseKeys: Object.keys(record(payload)),
+          // Temporarily keep a bounded raw body in diagnostics so production
+          // can confirm Search-a-licious' real envelope without flooding logs.
+          responseBody: responseBody.slice(0, 4_000),
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: this.timeoutMs
+        });
+      }
+      if (!response.ok) throw new FoodDataProviderUnavailableError(`Open Food Facts returned HTTP ${response.status}`);
+      return payload;
     } catch (error) {
       if (error instanceof ProductNotFoundError || error instanceof FoodDataProviderUnavailableError) throw error;
+      if (operation) {
+        this.diagnosticLogger?.({
+          operation,
+          url: url.toString(),
+          parameters: Object.fromEntries(url.searchParams),
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: this.timeoutMs,
+          timedOut: error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'),
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      }
       throw new FoodDataProviderUnavailableError('Open Food Facts request failed', { cause: error });
     }
   }
@@ -162,17 +224,25 @@ export class OpenFoodFactsService {
   }
 
   async searchProducts(query: string, limit: number) {
-    // OFF documents cgi/search.pl for full-text product search. Keeping this
-    // provider detail here allows it to be replaced without changing our API.
-    const url = new URL('/cgi/search.pl', API_BASE_URL);
-    url.searchParams.set('search_terms', query);
-    url.searchParams.set('search_simple', '1');
-    url.searchParams.set('action', 'process');
-    url.searchParams.set('json', '1');
+    // Product API v2 does not implement full-text search. Search-a-licious is
+    // Open Food Facts' public full-text engine and applies `q` server-side.
+    const url = new URL('/search', SEARCH_API_BASE_URL);
+    url.searchParams.set('q', query);
+    url.searchParams.set('page', '1');
     url.searchParams.set('page_size', String(limit));
     url.searchParams.set('fields', SEARCH_FIELDS);
-    const payload = record(await this.request(url));
-    const products = Array.isArray(payload.products) ? payload.products : [];
-    return products.map(normalizeSearchResult).filter((item): item is FoodSearchResult => item !== null).slice(0, limit);
+    const payload = record(await this.request(url, false, 'search'));
+    const hits = searchHits(payload);
+    if (!hits) {
+      this.diagnosticLogger?.({
+        operation: 'search',
+        endpoint: url.origin + url.pathname,
+        responseKeys: Object.keys(payload),
+        hitsType: payload.hits === null ? 'null' : typeof payload.hits,
+        productsType: payload.products === null ? 'null' : typeof payload.products
+      });
+      throw new FoodDataProviderUnavailableError('Unexpected Open Food Facts search response');
+    }
+    return hits.map(searchHitProduct).map(normalizeSearchResult).filter((item): item is FoodSearchResult => item !== null).slice(0, limit);
   }
 }
