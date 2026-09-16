@@ -121,7 +121,7 @@ test('product request asks Open Food Facts for nutrition and image fields', asyn
   });
 });
 
-test('search uses the Open Food Facts v2 endpoint and normalizes its products', async () => {
+test('search uses Search-a-licious full-text search and normalizes its products', async () => {
   let requestedUrl: URL | undefined;
   let diagnostic: Record<string, unknown> | undefined;
   const fetchMock = (async (input: string | URL | Request) => {
@@ -135,18 +135,20 @@ test('search uses the Open Food Facts v2 endpoint and normalizes its products', 
         product_name: 'Nutella',
         brands: 'Ferrero',
         quantity: '1 kg',
-        image_front_url: 'https://images.example/nutella.jpg',
-        nutriments: { proteins_100g: 6.3 }
+        image_front_url: 'https://images.example/nutella.jpg'
       }]
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   const service = new OpenFoodFactsService('test-agent', 1_000, fetchMock, (details) => { diagnostic = details; });
 
   const products = await service.searchProducts('nutella', 2);
-  assert.equal(requestedUrl?.pathname, '/api/v2/search');
-  assert.equal(requestedUrl?.searchParams.get('search_terms'), 'nutella');
+  assert.equal(requestedUrl?.origin, 'https://search.openfoodfacts.org');
+  assert.equal(requestedUrl?.pathname, '/search');
+  assert.equal(requestedUrl?.searchParams.get('q'), 'nutella');
+  assert.equal(requestedUrl?.searchParams.get('page'), '1');
   assert.equal(requestedUrl?.searchParams.get('page_size'), '2');
-  assert.equal(requestedUrl?.searchParams.has('fields'), true);
+  assert.equal(requestedUrl?.searchParams.get('fields'), 'code,product_name,brands,image_front_url,image_url,quantity');
+  assert.equal(requestedUrl?.searchParams.has('search_terms'), false);
   assert.deepEqual(products, [{
     barcode: '3017620422003',
     name: 'Nutella',
@@ -173,7 +175,7 @@ test('search rejects an unexpected Open Food Facts response instead of reporting
   await assert.rejects(() => service.searchProducts('orange', 10), FoodDataProviderUnavailableError);
   assert.deepEqual(diagnostic, {
     operation: 'search',
-    endpoint: 'https://world.openfoodfacts.org/api/v2/search',
+    endpoint: 'https://search.openfoodfacts.org/search',
     responseKeys: ['hits'],
     productsType: 'undefined'
   });

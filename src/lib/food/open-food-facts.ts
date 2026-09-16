@@ -1,14 +1,14 @@
 import { FoodNutrition, FoodProduct, FoodSearchResult, NutritionUnit } from './types.js';
 
 const API_BASE_URL = 'https://world.openfoodfacts.org';
+const SEARCH_API_BASE_URL = 'https://search.openfoodfacts.org';
 const PRODUCT_FIELDS = [
   'code', 'product_name', 'generic_name', 'brands', 'quantity', 'serving_size',
   'nutrition_data_per', 'product_quantity_unit', 'nutriments', 'selected_images',
   'image_url', 'image_front_url', 'image_small_url', 'image_thumb_url'
 ].join(',');
 const SEARCH_FIELDS = [
-  'code', 'product_name', 'generic_name', 'brands', 'quantity', 'selected_images',
-  'image_url', 'image_front_url', 'image_small_url', 'image_thumb_url'
+  'code', 'product_name', 'brands', 'image_front_url', 'image_url', 'quantity'
 ].join(',');
 const DIAGNOSTIC_BARCODE = '3017624010701';
 
@@ -172,11 +172,11 @@ export class OpenFoodFactsService {
   }
 
   async searchProducts(query: string, limit: number) {
-    // Use the current OFF v2 search resource rather than the legacy CGI
-    // endpoint. The response is deliberately validated before normalization:
-    // an upstream contract change must not silently look like an empty search.
-    const url = new URL('/api/v2/search', API_BASE_URL);
-    url.searchParams.set('search_terms', query);
+    // Product API v2 does not implement full-text search. Search-a-licious is
+    // Open Food Facts' public full-text engine and applies `q` server-side.
+    const url = new URL('/search', SEARCH_API_BASE_URL);
+    url.searchParams.set('q', query);
+    url.searchParams.set('page', '1');
     url.searchParams.set('page_size', String(limit));
     url.searchParams.set('fields', SEARCH_FIELDS);
     const payload = record(await this.request(url, false, 'search'));
