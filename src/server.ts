@@ -17,7 +17,10 @@ const { default: multipart } = (await import(MULTIPART_PACKAGE)) as {
 };
 
 const app = Fastify({ logger: true });
-const productionCorsOrigins = ['https://bodytrainingguide.com'];
+const productionCorsOrigins = [
+  'https://bodytrainingguide.com',
+  'https://www.bodytrainingguide.com'
+];
 
 app.decorate('prisma', prisma);
 
