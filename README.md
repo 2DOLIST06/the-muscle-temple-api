@@ -118,7 +118,7 @@ Une fiche trouvée sans nutrition conserve exactement la même structure (`nutri
 
 Les données sont attribuées à Open Food Facts via `source` et `sourceUrl`. Elles sont mises en cache dans PostgreSQL pendant 7 jours par défaut, puis rafraîchies au prochain accès.
 
-L'intégration utilise l'[API produit v2 officielle](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-v2/#get-/api/v2/product/-barcode-) et la [recherche plein texte documentée](https://openfoodfacts.github.io/openfoodfacts-server/api/how-to-use-the-api/#searching-products). Les conditions de réutilisation et d'attribution sont détaillées sur la [page officielle des données Open Food Facts](https://world.openfoodfacts.org/data) ; `sourceUrl` permet au client d'afficher un lien d'attribution vers chaque fiche source.
+L'intégration utilise l'[API produit v2 officielle](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-v2/#get-/api/v2/product/-barcode-) pour les codes-barres et le moteur [Search-a-licious](https://openfoodfacts.github.io/search-a-licious/) pour la recherche plein texte. La recherche appelle `https://search.openfoodfacts.org/search` avec le paramètre `q` ; `/api/v2/search` n'est pas utilisé pour une recherche libre. Les conditions de réutilisation et d'attribution sont détaillées sur la [page officielle des données Open Food Facts](https://world.openfoodfacts.org/data) ; `sourceUrl` permet au client d'afficher un lien d'attribution vers chaque fiche source.
 
 ## Endpoints admin (`/admin-api`)
 - Auth: `POST /admin-api/auth/login`

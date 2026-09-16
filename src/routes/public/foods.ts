@@ -31,7 +31,7 @@ export const foodRoutes: FastifyPluginAsync<FoodRoutesOptions> = async (fastify,
     env.OPEN_FOOD_FACTS_USER_AGENT,
     env.OPEN_FOOD_FACTS_TIMEOUT_MS,
     fetch,
-    (details) => fastify.log.info(details, 'Open Food Facts product fields diagnostic')
+    (details) => fastify.log.info(details, 'Open Food Facts diagnostic')
   );
   const cache = options.cache ?? new FoodProductCacheRepository(
     fastify.prisma,
