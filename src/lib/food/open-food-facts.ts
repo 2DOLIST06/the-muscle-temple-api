@@ -2,10 +2,15 @@ import { FoodNutrition, FoodProduct, FoodSearchResult, NutritionUnit } from './t
 
 const API_BASE_URL = 'https://world.openfoodfacts.org';
 const PRODUCT_FIELDS = [
-  'code', 'product_name', 'brands', 'image_front_url', 'image_url', 'quantity', 'serving_size',
-  'nutrition_data_per', 'product_quantity_unit', 'nutriments'
+  'code', 'product_name', 'generic_name', 'brands', 'quantity', 'serving_size',
+  'nutrition_data_per', 'product_quantity_unit', 'nutriments', 'selected_images',
+  'image_url', 'image_front_url', 'image_small_url', 'image_thumb_url'
 ].join(',');
-const SEARCH_FIELDS = ['code', 'product_name', 'brands', 'image_front_url', 'image_url', 'quantity'].join(',');
+const SEARCH_FIELDS = [
+  'code', 'product_name', 'generic_name', 'brands', 'quantity', 'selected_images',
+  'image_url', 'image_front_url', 'image_small_url', 'image_thumb_url'
+].join(',');
+const DIAGNOSTIC_BARCODE = '3017624010701';
 
 type Fetch = typeof fetch;
 type UnknownRecord = Record<string, unknown>;
@@ -25,6 +30,32 @@ function number(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
   return null;
+}
+
+function imageUrl(value: unknown): string | null {
+  const candidate = text(value);
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
+function firstImageInVariant(value: unknown): string | null {
+  return Object.values(record(value)).map(imageUrl).find((url) => url !== null) ?? null;
+}
+
+function productImage(product: UnknownRecord): string | null {
+  const front = record(record(product.selected_images).front);
+  return firstImageInVariant(front.display)
+    ?? firstImageInVariant(front.small)
+    ?? firstImageInVariant(front.thumb)
+    ?? imageUrl(product.image_front_url)
+    ?? imageUrl(product.image_url)
+    ?? imageUrl(product.image_small_url)
+    ?? imageUrl(product.image_thumb_url);
 }
 
 function nutritionUnit(product: UnknownRecord): NutritionUnit {
@@ -61,9 +92,9 @@ export function normalizeProduct(raw: unknown, fallbackBarcode: string): FoodPro
 
   return {
     barcode,
-    name: text(product.product_name),
+    name: text(product.product_name) ?? text(product.generic_name),
     brand: text(product.brands),
-    image: text(product.image_front_url) ?? text(product.image_url),
+    image: productImage(product),
     quantityLabel: text(product.quantity),
     servingSize: text(product.serving_size),
     nutritionBasis: { amount: 100, unit: nutritionUnit(product) },
@@ -80,9 +111,9 @@ function normalizeSearchResult(raw: unknown): FoodSearchResult | null {
   if (!barcode) return null;
   return {
     barcode,
-    name: text(product.product_name),
+    name: text(product.product_name) ?? text(product.generic_name),
     brand: text(product.brands),
-    image: text(product.image_front_url) ?? text(product.image_url),
+    image: productImage(product),
     quantityLabel: text(product.quantity),
     source: 'open_food_facts',
     sourceUrl: sourceUrl(barcode)
@@ -93,7 +124,8 @@ export class OpenFoodFactsService {
   constructor(
     private readonly userAgent: string,
     private readonly timeoutMs: number,
-    private readonly fetchImplementation: Fetch = fetch
+    private readonly fetchImplementation: Fetch = fetch,
+    private readonly diagnosticLogger?: (details: UnknownRecord) => void
   ) {}
 
   private async request(url: URL, notFoundOn404 = false) {
@@ -116,7 +148,17 @@ export class OpenFoodFactsService {
     url.searchParams.set('fields', PRODUCT_FIELDS);
     const payload = record(await this.request(url, true));
     if (payload.status === 0 || !payload.product) throw new ProductNotFoundError();
-    return normalizeProduct(payload.product, barcode);
+    const product = record(payload.product);
+    if (barcode === DIAGNOSTIC_BARCODE) {
+      this.diagnosticLogger?.({
+        barcode,
+        hasNutriments: Object.keys(record(product.nutriments)).length > 0,
+        hasSelectedImages: Object.keys(record(product.selected_images)).length > 0,
+        hasImageUrl: imageUrl(product.image_url) !== null,
+        hasImageFrontUrl: imageUrl(product.image_front_url) !== null
+      });
+    }
+    return normalizeProduct(product, barcode);
   }
 
   async searchProducts(query: string, limit: number) {
