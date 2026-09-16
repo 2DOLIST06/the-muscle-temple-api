@@ -22,7 +22,10 @@ const envSchema = z.object({
   SMTP_PASSWORD: z.string().min(1).optional(),
   SMTP_EHLO_DOMAIN: z.string().min(1).default('the-muscle-temple-api'),
   MAIL_FROM: z.string().email().optional(),
-  NEWSLETTER_RECIPIENT_EMAIL: z.string().email().default('contact@2dolist.fr')
+  NEWSLETTER_RECIPIENT_EMAIL: z.string().email().default('contact@2dolist.fr'),
+  OPEN_FOOD_FACTS_USER_AGENT: z.string().min(1).default('BodyTrainingGuide/1.0 (contact@2dolist.fr)'),
+  OPEN_FOOD_FACTS_TIMEOUT_MS: z.coerce.number().int().positive().max(30_000).default(5_000),
+  OPEN_FOOD_FACTS_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(168)
 });
 
 const parsed = envSchema.parse(process.env);

@@ -23,6 +23,7 @@ import {
 } from '../../lib/seo/urls.js';
 import { sendNewsletterSubscriptionEmail } from '../../lib/email/newsletter.js';
 import { buildRobotsTxt, buildSitemapXml } from '../../lib/seo/sitemap.js';
+import { foodRoutes } from './foods.js';
 
 const newsletterSubscriptionSchema = z.object({
   email: z.string().trim().toLowerCase().email('Adresse e-mail invalide.'),
@@ -167,6 +168,7 @@ async function getTranslationsByGroup(fastify: Parameters<FastifyPluginAsync>[0]
 }
 
 export const publicRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(foodRoutes);
   fastify.get('/health', async () => ({ ok: true }));
 
   const sendEnglishSitemap = async (_request: unknown, reply: FastifyReply) => {
