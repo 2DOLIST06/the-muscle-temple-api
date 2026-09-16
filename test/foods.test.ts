@@ -32,9 +32,9 @@ const completeProduct = normalizeProduct({
   }
 }, '4006381333931');
 
-function buildApp(options: Parameters<typeof foodRoutes>[1]) {
+function buildApp(options: Parameters<typeof foodRoutes>[1], prefix?: string) {
   const app = Fastify({ logger: false });
-  app.register(foodRoutes, options);
+  app.register(foodRoutes, { ...options, prefix });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) return reply.code(400).send({ message: error.issues[0]?.message });
     return reply.code(500).send({ message: 'Internal server error' });
@@ -81,6 +81,30 @@ test('valid cached product avoids a provider call', async () => {
   assert.equal(first.statusCode, 200);
   assert.equal(second.json().meta.cached, true);
   assert.equal(calls, 0);
+  await app.close();
+});
+
+test('frontend nutrition paths are registered with the expected parameters', async () => {
+  let searchedFor: [string, number] | undefined;
+  const app = buildApp({
+    provider: {
+      async getProductByBarcode() { return completeProduct; },
+      async searchProducts(query, limit) { searchedFor = [query, limit]; return []; }
+    },
+    cache: { async get() { return completeProduct; }, async set() {} }
+  }, '/api');
+
+  const productResponse = await app.inject({ method: 'GET', url: '/api/nutrition/products/3017624010701' });
+  assert.equal(productResponse.statusCode, 200);
+  assert.equal(productResponse.json().data.barcode, completeProduct.barcode);
+
+  const searchResponse = await app.inject({ method: 'GET', url: '/api/nutrition/search?query=steak' });
+  assert.equal(searchResponse.statusCode, 200);
+  assert.deepEqual(searchedFor, ['steak', 10]);
+  assert.deepEqual(searchResponse.json(), {
+    data: [],
+    meta: { query: 'steak', limit: 10, count: 0 }
+  });
   await app.close();
 });
 

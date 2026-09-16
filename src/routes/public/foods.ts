@@ -1,4 +1,4 @@
-import { FastifyPluginAsync } from 'fastify';
+import { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { env } from '../../config/env.js';
 import { FoodProductCacheRepository } from '../../lib/food/cache.js';
 import {
@@ -33,8 +33,8 @@ export const foodRoutes: FastifyPluginAsync<FoodRoutesOptions> = async (fastify,
     env.OPEN_FOOD_FACTS_CACHE_TTL_HOURS * 60 * 60 * 1000
   );
 
-  fastify.get('/foods/barcode/:code', async (request, reply) => {
-    const { code } = barcodeParamSchema.parse(request.params);
+  const getProduct = async (barcode: unknown, request: FastifyRequest, reply: FastifyReply) => {
+    const { code } = barcodeParamSchema.parse({ code: barcode });
     const cached = await cache.get(code);
     if (cached) return { data: cached, meta: { cached: true } };
 
@@ -52,10 +52,10 @@ export const foodRoutes: FastifyPluginAsync<FoodRoutesOptions> = async (fastify,
       }
       throw error;
     }
-  });
+  };
 
-  fastify.get('/foods/search', async (request, reply) => {
-    const { q, limit } = foodSearchQuerySchema.parse(request.query);
+  const searchProducts = async (query: unknown, limitValue: unknown, request: FastifyRequest, reply: FastifyReply) => {
+    const { q, limit } = foodSearchQuerySchema.parse({ q: query, limit: limitValue });
     try {
       const products = await provider.searchProducts(q, limit);
       return { data: products, meta: { query: q, limit, count: products.length } };
@@ -66,5 +66,25 @@ export const foodRoutes: FastifyPluginAsync<FoodRoutesOptions> = async (fastify,
       }
       throw error;
     }
+  };
+
+  fastify.get('/foods/barcode/:code', async (request, reply) => {
+    const { code } = request.params as { code: string };
+    return getProduct(code, request, reply);
+  });
+
+  fastify.get('/foods/search', async (request, reply) => {
+    const { q, limit } = request.query as { q?: string; limit?: string };
+    return searchProducts(q, limit, request, reply);
+  });
+
+  fastify.get('/nutrition/products/:barcode', async (request, reply) => {
+    const { barcode } = request.params as { barcode: string };
+    return getProduct(barcode, request, reply);
+  });
+
+  fastify.get('/nutrition/search', async (request, reply) => {
+    const { query, limit } = request.query as { query?: string; limit?: string };
+    return searchProducts(query, limit, request, reply);
   });
 };
