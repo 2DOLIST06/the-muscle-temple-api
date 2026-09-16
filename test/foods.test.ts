@@ -130,12 +130,14 @@ test('search uses Search-a-licious full-text search and normalizes its products'
       count: 1,
       page: 1,
       page_size: 2,
-      products: [{
-        code: '3017620422003',
-        product_name: 'Nutella',
-        brands: 'Ferrero',
-        quantity: '1 kg',
-        image_front_url: 'https://images.example/nutella.jpg'
+      hits: [{
+        _source: {
+          code: '3017620422003',
+          product_name: 'Nutella',
+          brands: 'Ferrero',
+          quantity: '1 kg',
+          image_front_url: 'https://images.example/nutella.jpg'
+        }
       }]
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
@@ -161,12 +163,12 @@ test('search uses Search-a-licious full-text search and normalizes its products'
   assert.equal('nutrition' in products[0]!, false);
   assert.equal(diagnostic?.operation, 'search');
   assert.equal(diagnostic?.status, 200);
-  assert.deepEqual(diagnostic?.responseKeys, ['count', 'page', 'page_size', 'products']);
+  assert.deepEqual(diagnostic?.responseKeys, ['count', 'page', 'page_size', 'hits']);
 });
 
 test('search rejects an unexpected Open Food Facts response instead of reporting no results', async () => {
   let diagnostic: Record<string, unknown> | undefined;
-  const fetchMock = (async () => new Response(JSON.stringify({ hits: [] }), {
+  const fetchMock = (async () => new Response(JSON.stringify({ results: [] }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' }
   })) as typeof fetch;
@@ -176,8 +178,38 @@ test('search rejects an unexpected Open Food Facts response instead of reporting
   assert.deepEqual(diagnostic, {
     operation: 'search',
     endpoint: 'https://search.openfoodfacts.org/search',
-    responseKeys: ['hits'],
+    responseKeys: ['results'],
+    hitsType: 'undefined',
     productsType: 'undefined'
+  });
+});
+
+test('search diagnostics expose provider HTTP errors and network timeouts', async (t) => {
+  await t.test('HTTP error body', async () => {
+    const diagnostics: Record<string, unknown>[] = [];
+    const fetchMock = (async () => new Response('{"detail":"invalid fields"}', {
+      status: 422,
+      headers: { 'Content-Type': 'application/json' }
+    })) as typeof fetch;
+    const service = new OpenFoodFactsService('test-agent', 1_000, fetchMock, (details) => { diagnostics.push(details); });
+
+    await assert.rejects(() => service.searchProducts('nutella', 10), FoodDataProviderUnavailableError);
+    assert.equal(diagnostics[0]?.status, 422);
+    assert.equal(diagnostics[0]?.responseBody, '{"detail":"invalid fields"}');
+    assert.equal((diagnostics[0]?.parameters as Record<string, string>).q, 'nutella');
+  });
+
+  await t.test('network timeout', async () => {
+    let diagnostic: Record<string, unknown> | undefined;
+    const timeout = new Error('The operation was aborted due to timeout');
+    timeout.name = 'TimeoutError';
+    const fetchMock = (async () => { throw timeout; }) as typeof fetch;
+    const service = new OpenFoodFactsService('test-agent', 250, fetchMock, (details) => { diagnostic = details; });
+
+    await assert.rejects(() => service.searchProducts('skyr', 10), FoodDataProviderUnavailableError);
+    assert.equal(diagnostic?.timedOut, true);
+    assert.equal(diagnostic?.timeoutMs, 250);
+    assert.equal(diagnostic?.errorMessage, 'The operation was aborted due to timeout');
   });
 });
 
