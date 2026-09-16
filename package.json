@@ -8,6 +8,7 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node prisma/deploy.mjs && node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "DATABASE_URL=postgresql://test:test@localhost:5432/test JWT_SECRET=test-secret-that-is-at-least-32-characters tsx --test test/*.test.ts",
     "prisma:generate": "npm run generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",

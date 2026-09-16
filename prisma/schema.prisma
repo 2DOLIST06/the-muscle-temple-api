@@ -37,6 +37,15 @@ model NewsletterSubscriber {
   @@index([createdAt])
 }
 
+model FoodProductCache {
+  barcode   String   @id
+  product   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([updatedAt])
+}
+
 model User {
   id             String   @id @default(cuid())
   email          String   @unique

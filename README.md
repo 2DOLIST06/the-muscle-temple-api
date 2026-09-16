@@ -47,6 +47,9 @@ Variables nécessaires:
 - `SMTP_SERVER` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM` pour envoyer les notifications SMTP de newsletter
 - `SMTP_EHLO_DOMAIN` (optionnel, par défaut `the-muscle-temple-api`)
 - `NEWSLETTER_RECIPIENT_EMAIL` (par défaut `contact@2dolist.fr`)
+- `OPEN_FOOD_FACTS_USER_AGENT` (identification envoyée à Open Food Facts ; par défaut `BodyTrainingGuide/1.0 (contact@2dolist.fr)`)
+- `OPEN_FOOD_FACTS_TIMEOUT_MS` (timeout fournisseur, par défaut `5000`)
+- `OPEN_FOOD_FACTS_CACHE_TTL_HOURS` (validité du cache PostgreSQL, par défaut `168`, soit 7 jours)
 
 Exemple multi-origines:
 ```env
@@ -81,6 +84,41 @@ npm run dev
 - `GET /api/authors`
 - `GET /api/authors/:slug/posts`
 - `GET /api/seo/pages/:key`
+
+### Produits alimentaires (Open Food Facts)
+
+`GET /api/foods/barcode/:code` accepte un EAN-8, UPC-E, UPC-A ou EAN-13 valide (les espaces sont retirés). Une réponse `200` contient la fiche sous `data` et `meta.cached`. Les valeurs absentes restent `null`, `nutritionAvailable` distingue une fiche sans données nutritionnelles, et `nutritionBasis.unit` vaut toujours `g` ou `ml` sans conversion.
+
+```json
+{
+  "data": {
+    "barcode": "3017620422003",
+    "name": "Produit",
+    "brand": "Marque",
+    "image": "https://images.openfoodfacts.org/example.jpg",
+    "quantityLabel": "500 g",
+    "servingSize": null,
+    "nutritionBasis": { "amount": 100, "unit": "g" },
+    "nutrition": {
+      "caloriesKcal": 123, "energyKj": 515, "proteinG": 10.5,
+      "carbohydratesG": 20, "sugarsG": 4, "fatG": 2,
+      "saturatedFatG": 0.8, "fiberG": 3, "saltG": 0.5, "sodiumG": 0.2
+    },
+    "nutritionAvailable": true,
+    "source": "open_food_facts",
+    "sourceUrl": "https://world.openfoodfacts.org/product/3017620422003"
+  },
+  "meta": { "cached": false }
+}
+```
+
+Une fiche trouvée sans nutrition conserve exactement la même structure (`nutritionAvailable: false` et chaque nutriment à `null`). Un code invalide produit `400`. Un produit absent produit `404` avec `{"code":"PRODUCT_NOT_FOUND","message":"Produit introuvable."}`. Une indisponibilité fournisseur produit `503` avec `{"code":"FOOD_DATA_PROVIDER_UNAVAILABLE","message":"Le service de données nutritionnelles est temporairement indisponible."}`.
+
+`GET /api/foods/search?q=texte&limit=10` effectue une recherche explicite. `q` comporte 2 à 100 caractères et `limit` vaut 10 par défaut, 20 maximum. Une réponse `200` contient `{ "data": [{ "barcode", "name", "brand", "image", "quantityLabel", "source", "sourceUrl" }], "meta": { "query", "limit", "count" } }`. Les erreurs de validation et fournisseur utilisent respectivement `400` et `503`. La recherche n'est pas mise en cache ; la fiche sélectionnée l'est lors de sa récupération par code-barres.
+
+Les données sont attribuées à Open Food Facts via `source` et `sourceUrl`. Elles sont mises en cache dans PostgreSQL pendant 7 jours par défaut, puis rafraîchies au prochain accès.
+
+L'intégration utilise l'[API produit v2 officielle](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-v2/#get-/api/v2/product/-barcode-) et la [recherche plein texte documentée](https://openfoodfacts.github.io/openfoodfacts-server/api/how-to-use-the-api/#searching-products). Les conditions de réutilisation et d'attribution sont détaillées sur la [page officielle des données Open Food Facts](https://world.openfoodfacts.org/data) ; `sourceUrl` permet au client d'afficher un lien d'attribution vers chaque fiche source.
 
 ## Endpoints admin (`/admin-api`)
 - Auth: `POST /admin-api/auth/login`
