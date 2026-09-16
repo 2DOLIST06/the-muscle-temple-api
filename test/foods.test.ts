@@ -6,6 +6,7 @@ import { FoodProductCacheRepository } from '../src/lib/food/cache.js';
 import {
   FoodDataProviderUnavailableError,
   normalizeProduct,
+  OpenFoodFactsService,
   ProductNotFoundError
 } from '../src/lib/food/open-food-facts.js';
 import { FoodProduct } from '../src/lib/food/types.js';
@@ -65,6 +66,59 @@ test('normalization preserves 100 ml, provider calories, explicit zeroes, and nu
   const withoutNutrition = normalizeProduct({ code: '96385074', product_name: 'Sans nutrition' }, '96385074');
   assert.equal(withoutNutrition.nutritionAvailable, false);
   assert.ok(Object.values(withoutNutrition.nutrition).every((value) => value === null));
+});
+
+test('normalization prioritizes selected images and uses all image fallbacks', () => {
+  const selectedImage = normalizeProduct({
+    code: '96385074',
+    selected_images: { front: { display: { fr: 'https://images.example/selected.jpg' } } },
+    image_front_url: 'https://images.example/front.jpg'
+  }, '96385074');
+  assert.equal(selectedImage.image, 'https://images.example/selected.jpg');
+
+  for (const field of ['image_front_url', 'image_url', 'image_small_url', 'image_thumb_url']) {
+    const product = normalizeProduct({ code: '96385074', [field]: `https://images.example/${field}.jpg` }, '96385074');
+    assert.equal(product.image, `https://images.example/${field}.jpg`);
+  }
+
+  assert.equal(normalizeProduct({ code: '96385074', image_url: 'not-a-url' }, '96385074').image, null);
+});
+
+test('product request asks Open Food Facts for nutrition and image fields', async () => {
+  let requestedUrl: URL | undefined;
+  let diagnostic: Record<string, unknown> | undefined;
+  const fetchMock = (async (input: string | URL | Request) => {
+    requestedUrl = new URL(input instanceof Request ? input.url : input.toString());
+    return new Response(JSON.stringify({
+      status: 1,
+      product: {
+        code: '3017624010701',
+        product_name: 'Nutella',
+        brands: 'Ferrero',
+        nutriments: { 'energy-kcal_100g': 539, proteins_100g: 6.3 },
+        selected_images: { front: { display: { fr: 'https://images.example/nutella.jpg' } } }
+      }
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+  const service = new OpenFoodFactsService('test-agent', 1_000, fetchMock, (details) => { diagnostic = details; });
+
+  const product = await service.getProductByBarcode('3017624010701');
+  const fields = new Set(requestedUrl?.searchParams.get('fields')?.split(','));
+  for (const field of [
+    'code', 'product_name', 'generic_name', 'brands', 'quantity', 'serving_size',
+    'nutrition_data_per', 'nutriments', 'selected_images', 'image_url',
+    'image_front_url', 'image_small_url', 'image_thumb_url'
+  ]) assert.equal(fields.has(field), true, `missing requested field: ${field}`);
+  assert.equal(product.nutrition.caloriesKcal, 539);
+  assert.equal(product.nutrition.proteinG, 6.3);
+  assert.equal(product.image, 'https://images.example/nutella.jpg');
+  assert.deepEqual(diagnostic, {
+    barcode: '3017624010701',
+    hasNutriments: true,
+    hasSelectedImages: true,
+    hasImageUrl: false,
+    hasImageFrontUrl: false
+  });
 });
 
 test('valid cached product avoids a provider call', async () => {

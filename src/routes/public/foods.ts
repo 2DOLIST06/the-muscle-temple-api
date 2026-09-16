@@ -27,7 +27,12 @@ export interface FoodRoutesOptions {
 const providerUnavailable = { code: 'FOOD_DATA_PROVIDER_UNAVAILABLE', message: 'Le service de données nutritionnelles est temporairement indisponible.' };
 
 export const foodRoutes: FastifyPluginAsync<FoodRoutesOptions> = async (fastify, options) => {
-  const provider = options.provider ?? new OpenFoodFactsService(env.OPEN_FOOD_FACTS_USER_AGENT, env.OPEN_FOOD_FACTS_TIMEOUT_MS);
+  const provider = options.provider ?? new OpenFoodFactsService(
+    env.OPEN_FOOD_FACTS_USER_AGENT,
+    env.OPEN_FOOD_FACTS_TIMEOUT_MS,
+    fetch,
+    (details) => fastify.log.info(details, 'Open Food Facts product fields diagnostic')
+  );
   const cache = options.cache ?? new FoodProductCacheRepository(
     fastify.prisma,
     env.OPEN_FOOD_FACTS_CACHE_TTL_HOURS * 60 * 60 * 1000
