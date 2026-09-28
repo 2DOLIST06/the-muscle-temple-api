@@ -76,7 +76,11 @@ npm run dev
 
 ## Endpoints publics (`/api`)
 - `GET /api/health`
-- `POST /api/newsletter` avec `{ "email": "abonne@example.com", "source": "footer" }` : enregistre l’adresse en base puis envoie une notification d’inscription à `NEWSLETTER_RECIPIENT_EMAIL` via le serveur SMTP configuré (reprise automatique si une notification précédente a échoué)
+- `POST /api/newsletter/subscribe` : démarre une inscription en double opt-in (aucun e-mail n'est encore envoyé par ce module)
+- `POST /api/newsletter/confirm` : confirme une inscription avec son `confirmation_token`
+- `GET /api/newsletter/preferences?token=...` : lit le statut, la langue, les préférences et les objectifs associés au `preferences_token`
+- `PUT /api/newsletter/preferences` : remplace les objectifs fournis et met à jour les préférences avec le `preferences_token`
+- `POST /api/newsletter/unsubscribe` : désinscrit sans supprimer les données, avec le `preferences_token`
 - `GET /api/posts`
 - `GET /api/posts/:slug`
 - `GET /api/categories`
@@ -117,6 +121,25 @@ Une fiche trouvée sans nutrition conserve exactement la même structure (`nutri
 `GET /api/foods/search?q=texte&limit=10` effectue une recherche explicite. `q` comporte 2 à 100 caractères et `limit` vaut 10 par défaut, 20 maximum. Une réponse `200` contient `{ "data": [{ "barcode", "name", "brand", "image", "quantityLabel", "source", "sourceUrl" }], "meta": { "query", "limit", "count" } }`. Les erreurs de validation et fournisseur utilisent respectivement `400` et `503`. La recherche n'est pas mise en cache ; la fiche sélectionnée l'est lors de sa récupération par code-barres.
 
 Les données sont attribuées à Open Food Facts via `source` et `sourceUrl`. Elles sont mises en cache dans PostgreSQL pendant 7 jours par défaut, puis rafraîchies au prochain accès.
+
+### Newsletter Body Training Guide
+
+L'inscription attend le payload suivant. L'adresse est normalisée côté serveur et le consentement doit être explicite :
+
+```json
+{
+  "email": "abonne@example.com",
+  "language": "fr",
+  "source": "footer",
+  "consent": true,
+  "consentTextVersion": "2026-09",
+  "consentSource": "footer-checkbox"
+}
+```
+
+La confirmation et la désinscription attendent `{ "token": "..." }`. Le token de confirmation est distinct du token de gestion des préférences. La lecture transmet ce dernier dans le paramètre de requête `token`. Une mise à jour de préférences accepte `token`, les booléens `newArticles`, `strengthTraining`, `workoutPrograms`, `nutrition`, `supplements`, `equipment`, `tools`, `guides`, `frequency` (`immediate`, `weekly`, `monthly`) et `goals` (`hypertrophy`, `fat_loss`, `strength`, `general_fitness`). Tous les champs de préférence sont optionnels, mais au moins un doit être fourni.
+
+La réponse publique d'inscription est volontairement générique pour ne pas révéler l'existence d'une adresse. Les tokens sont seulement stockés en base en préparation du futur service d'envoi : ils ne sont jamais renvoyés par l'endpoint d'inscription. Aucune variable d'environnement supplémentaire ni aucun fournisseur d'e-mail ne sont nécessaires pour ce module.
 
 L'intégration utilise l'[API produit v2 officielle](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-v2/#get-/api/v2/product/-barcode-) pour les codes-barres et le moteur [Search-a-licious](https://openfoodfacts.github.io/search-a-licious/) pour la recherche plein texte. La recherche appelle `https://search.openfoodfacts.org/search` avec le paramètre `q` ; `/api/v2/search` n'est pas utilisé pour une recherche libre. Les conditions de réutilisation et d'attribution sont détaillées sur la [page officielle des données Open Food Facts](https://world.openfoodfacts.org/data) ; `sourceUrl` permet au client d'afficher un lien d'attribution vers chaque fiche source.
 
