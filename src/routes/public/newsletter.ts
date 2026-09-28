@@ -31,21 +31,47 @@ const publicSubscriberSelect = {
 } as const;
 
 function serializePreferences(subscriber: Prisma.NewsletterSubscriberGetPayload<{ select: typeof publicSubscriberSelect }>) {
+  const preferences = subscriber.preferences ?? {
+    newArticles: true,
+    strengthTraining: true,
+    workoutPrograms: true,
+    nutrition: true,
+    supplements: true,
+    equipment: true,
+    tools: true,
+    guides: true,
+    frequency: NewsletterFrequency.weekly
+  };
+
   return {
-    status: subscriber.status,
     language: subscriber.language,
-    ...(subscriber.preferences ?? {
-      newArticles: true,
-      strengthTraining: true,
-      workoutPrograms: true,
-      nutrition: true,
-      supplements: true,
-      equipment: true,
-      tools: true,
-      guides: true,
-      frequency: NewsletterFrequency.weekly
-    }),
-    goals: subscriber.goals.map(({ goal }) => goal)
+    topics: {
+      new_articles: preferences.newArticles,
+      strength_training: preferences.strengthTraining,
+      workout_programs: preferences.workoutPrograms,
+      nutrition: preferences.nutrition,
+      supplements: preferences.supplements,
+      equipment: preferences.equipment,
+      tools: preferences.tools,
+      guides: preferences.guides
+    },
+    goals: subscriber.goals.map(({ goal }) => goal),
+    frequency: preferences.frequency,
+    unsubscribed: subscriber.status === NewsletterStatus.unsubscribed
+  };
+}
+
+function toDatabasePreferences(topics: Record<string, boolean> | undefined) {
+  if (!topics) return {};
+  return {
+    ...(topics.new_articles === undefined ? {} : { newArticles: topics.new_articles }),
+    ...(topics.strength_training === undefined ? {} : { strengthTraining: topics.strength_training }),
+    ...(topics.workout_programs === undefined ? {} : { workoutPrograms: topics.workout_programs }),
+    ...(topics.nutrition === undefined ? {} : { nutrition: topics.nutrition }),
+    ...(topics.supplements === undefined ? {} : { supplements: topics.supplements }),
+    ...(topics.equipment === undefined ? {} : { equipment: topics.equipment }),
+    ...(topics.tools === undefined ? {} : { tools: topics.tools }),
+    ...(topics.guides === undefined ? {} : { guides: topics.guides })
   };
 }
 
@@ -86,9 +112,7 @@ export const newsletterRoutes: FastifyPluginAsync = async (fastify) => {
                 consentTextVersion: input.consentTextVersion,
                 consentSource,
                 confirmedAt: now,
-                unsubscribedAt: null,
-                confirmationToken: createToken(),
-                preferencesToken: createToken()
+                unsubscribedAt: null
               }
             })
           : existingSubscriber;
@@ -157,7 +181,11 @@ export const newsletterRoutes: FastifyPluginAsync = async (fastify) => {
     });
     if (!subscriber) return reply.code(404).send({ message: 'Token invalide.' });
 
-    const { token: _token, goals, ...preferences } = input;
+    const { token: _token, goals, topics, frequency } = input;
+    const preferences = {
+      ...toDatabasePreferences(topics),
+      ...(frequency === undefined ? {} : { frequency })
+    };
     const updated = await fastify.prisma.$transaction(async (tx) => {
       await tx.newsletterPreference.upsert({
         where: { subscriberId: subscriber.id },
