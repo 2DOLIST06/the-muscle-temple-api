@@ -32,3 +32,11 @@ services:
         sync: false
       - key: NEWSLETTER_RECIPIENT_EMAIL
         value: contact@2dolist.fr
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: BREVO_SENDER_NAME
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

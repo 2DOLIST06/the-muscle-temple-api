@@ -7,6 +7,7 @@ import {
   newsletterTokenBodySchema,
   newsletterTokenQuerySchema
 } from '../../validation/newsletter.js';
+import { sendNewsletterWelcomeEmail } from '../../lib/email/newsletter-welcome.js';
 
 const createToken = () => randomBytes(32).toString('base64url');
 
@@ -53,51 +54,66 @@ export const newsletterRoutes: FastifyPluginAsync = async (fastify) => {
     const input = newsletterSubscribeSchema.parse(request.body);
     const now = new Date();
 
-    await fastify.prisma.$transaction(async (tx) => {
+    const welcomeRecipient = await fastify.prisma.$transaction(async (tx) => {
       const consentSource = input.consentSource ?? input.source;
-      const subscriber = await tx.newsletterSubscriber.upsert({
-        where: { email: input.email },
-        update: {},
-        create: {
-          email: input.email,
-          status: NewsletterStatus.pending,
-          language: input.language,
-          source: input.source,
-          consentAt: now,
-          consentTextVersion: input.consentTextVersion,
-          consentSource,
-          confirmationToken: createToken(),
-          preferencesToken: createToken()
-        }
-      });
-
-      const pendingSubscriber = subscriber.status === NewsletterStatus.unsubscribed
-        ? await tx.newsletterSubscriber.update({
-            where: { id: subscriber.id },
+      const existingSubscriber = await tx.newsletterSubscriber.findUnique({ where: { email: input.email } });
+      const shouldActivate = existingSubscriber?.status === NewsletterStatus.unsubscribed
+        || existingSubscriber?.status === NewsletterStatus.pending;
+      const shouldSendWelcome = !existingSubscriber || shouldActivate;
+      const activeSubscriber = !existingSubscriber
+        ? await tx.newsletterSubscriber.create({
             data: {
-              status: NewsletterStatus.pending,
+              email: input.email,
+              status: NewsletterStatus.active,
               language: input.language,
               source: input.source,
               consentAt: now,
               consentTextVersion: input.consentTextVersion,
               consentSource,
-              confirmedAt: null,
-              unsubscribedAt: null,
+              confirmedAt: now,
               confirmationToken: createToken(),
               preferencesToken: createToken()
             }
           })
-        : subscriber;
+        : shouldActivate
+          ? await tx.newsletterSubscriber.update({
+              where: { id: existingSubscriber.id },
+              data: {
+                status: NewsletterStatus.active,
+                language: input.language,
+                source: input.source,
+                consentAt: now,
+                consentTextVersion: input.consentTextVersion,
+                consentSource,
+                confirmedAt: now,
+                unsubscribedAt: null,
+                confirmationToken: createToken(),
+                preferencesToken: createToken()
+              }
+            })
+          : existingSubscriber;
 
       await tx.newsletterPreference.upsert({
-        where: { subscriberId: pendingSubscriber.id },
-        create: { subscriberId: pendingSubscriber.id },
+        where: { subscriberId: activeSubscriber.id },
+        create: { subscriberId: activeSubscriber.id },
         update: {}
       });
+
+      return shouldSendWelcome
+        ? { email: activeSubscriber.email, language: activeSubscriber.language, preferencesToken: activeSubscriber.preferencesToken }
+        : null;
     });
 
-    return reply.code(202).send({
-      message: 'Si cette adresse peut être inscrite, une confirmation sera nécessaire.'
+    if (welcomeRecipient) {
+      try {
+        await sendNewsletterWelcomeEmail(welcomeRecipient);
+      } catch (error) {
+        request.log.error({ err: error }, 'Unable to send newsletter welcome email via Brevo');
+      }
+    }
+
+    return reply.code(200).send({
+      message: 'Si cette adresse peut être inscrite, son inscription est prise en compte.'
     });
   });
 

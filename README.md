@@ -47,6 +47,8 @@ Variables nécessaires:
 - `SMTP_SERVER` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `MAIL_FROM` pour envoyer les notifications SMTP de newsletter
 - `SMTP_EHLO_DOMAIN` (optionnel, par défaut `the-muscle-temple-api`)
 - `NEWSLETTER_RECIPIENT_EMAIL` (par défaut `contact@2dolist.fr`)
+- `BREVO_API_KEY` / `BREVO_SENDER_EMAIL` / `BREVO_SENDER_NAME` pour l'e-mail transactionnel de bienvenue
+- `FRONTEND_URL` (origine publique du front, utilisée pour les liens de préférences et de désinscription)
 - `OPEN_FOOD_FACTS_USER_AGENT` (identification envoyée à Open Food Facts ; par défaut `BodyTrainingGuide/1.0 (contact@2dolist.fr)`)
 - `OPEN_FOOD_FACTS_TIMEOUT_MS` (timeout fournisseur, par défaut `5000`)
 - `OPEN_FOOD_FACTS_CACHE_TTL_HOURS` (validité du cache PostgreSQL, par défaut `168`, soit 7 jours)
@@ -76,7 +78,7 @@ npm run dev
 
 ## Endpoints publics (`/api`)
 - `GET /api/health`
-- `POST /api/newsletter/subscribe` : démarre une inscription en double opt-in (aucun e-mail n'est encore envoyé par ce module)
+- `POST /api/newsletter/subscribe` : active immédiatement l'inscription avec consentement et tente d'envoyer l'e-mail de bienvenue Brevo
 - `POST /api/newsletter/confirm` : confirme une inscription avec son `confirmation_token`
 - `GET /api/newsletter/preferences?token=...` : lit le statut, la langue, les préférences et les objectifs associés au `preferences_token`
 - `PUT /api/newsletter/preferences` : remplace les objectifs fournis et met à jour les préférences avec le `preferences_token`
@@ -139,7 +141,9 @@ L'inscription attend le payload suivant. L'adresse est normalisée côté serveu
 
 La confirmation et la désinscription attendent `{ "token": "..." }`. Le token de confirmation est distinct du token de gestion des préférences. La lecture transmet ce dernier dans le paramètre de requête `token`. Une mise à jour de préférences accepte `token`, les booléens `newArticles`, `strengthTraining`, `workoutPrograms`, `nutrition`, `supplements`, `equipment`, `tools`, `guides`, `frequency` (`immediate`, `weekly`, `monthly`) et `goals` (`hypertrophy`, `fat_loss`, `strength`, `general_fitness`). Tous les champs de préférence sont optionnels, mais au moins un doit être fourni.
 
-La réponse publique d'inscription est volontairement générique pour ne pas révéler l'existence d'une adresse. Les tokens sont seulement stockés en base en préparation du futur service d'envoi : ils ne sont jamais renvoyés par l'endpoint d'inscription. Aucune variable d'environnement supplémentaire ni aucun fournisseur d'e-mail ne sont nécessaires pour ce module.
+La réponse publique d'inscription reste volontairement générique pour ne pas révéler l'existence d'une adresse. Une nouvelle adresse devient immédiatement `active` et reçoit un e-mail de bienvenue via l'API transactionnelle Brevo. Une adresse `unsubscribed` est réactivée avec un nouveau token, sans effacer ses préférences. Une adresse déjà `active` reste inchangée et ne reçoit pas de nouvel e-mail. Un échec Brevo est journalisé sans token et n'annule jamais l'inscription en base.
+
+Les liens de l'e-mail ciblent le centre de préférences du front : `${FRONTEND_URL}/newsletter/preferences?token=...` en anglais et `${FRONTEND_URL}/fr/newsletter/preferences?token=...` en français. Le lien de désinscription ajoute `action=unsubscribe` à cette URL ; le centre existant effectue ensuite la désinscription via `POST /api/newsletter/unsubscribe`.
 
 L'intégration utilise l'[API produit v2 officielle](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-v2/#get-/api/v2/product/-barcode-) pour les codes-barres et le moteur [Search-a-licious](https://openfoodfacts.github.io/search-a-licious/) pour la recherche plein texte. La recherche appelle `https://search.openfoodfacts.org/search` avec le paramètre `q` ; `/api/v2/search` n'est pas utilisé pour une recherche libre. Les conditions de réutilisation et d'attribution sont détaillées sur la [page officielle des données Open Food Facts](https://world.openfoodfacts.org/data) ; `sourceUrl` permet au client d'afficher un lien d'attribution vers chaque fiche source.
 

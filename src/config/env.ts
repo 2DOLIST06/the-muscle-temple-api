@@ -23,6 +23,10 @@ const envSchema = z.object({
   SMTP_EHLO_DOMAIN: z.string().min(1).default('the-muscle-temple-api'),
   MAIL_FROM: z.string().email().optional(),
   NEWSLETTER_RECIPIENT_EMAIL: z.string().email().default('contact@2dolist.fr'),
+  BREVO_API_KEY: z.string().min(1).optional(),
+  BREVO_SENDER_EMAIL: z.string().email().optional(),
+  BREVO_SENDER_NAME: z.string().trim().min(1).optional(),
+  FRONTEND_URL: z.string().url().optional(),
   OPEN_FOOD_FACTS_USER_AGENT: z.string().min(1).default('BodyTrainingGuide/1.0 (contact@2dolist.fr)'),
   OPEN_FOOD_FACTS_TIMEOUT_MS: z.coerce.number().int().positive().max(30_000).default(5_000),
   OPEN_FOOD_FACTS_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(168)
