@@ -24,13 +24,25 @@ test('newsletter preference validation accepts supported values and rejects unkn
   const token = 'a'.repeat(43);
   const parsed = newsletterPreferencesUpdateSchema.parse({
     token,
-    nutrition: false,
+    topics: {
+      new_articles: true,
+      strength_training: false,
+      workout_programs: true,
+      nutrition: false,
+      supplements: true,
+      equipment: false,
+      tools: true,
+      guides: false
+    },
     frequency: 'monthly',
     goals: ['hypertrophy', 'strength']
   });
   assert.deepEqual(parsed.goals, ['hypertrophy', 'strength']);
+  assert.equal(parsed.topics?.strength_training, false);
   assert.throws(() => newsletterPreferencesUpdateSchema.parse({ token, frequency: 'daily' }));
   assert.throws(() => newsletterPreferencesUpdateSchema.parse({ token, unknown: true }));
+  assert.throws(() => newsletterPreferencesUpdateSchema.parse({ token, topics: {} }));
+  assert.throws(() => newsletterPreferencesUpdateSchema.parse({ token, topics: { newArticles: true } }));
   assert.throws(() => newsletterPreferencesUpdateSchema.parse({ token }));
 });
 

@@ -17,16 +17,22 @@ export const newsletterSubscribeSchema = z.object({
 export const newsletterTokenBodySchema = z.object({ token: tokenSchema }).strict();
 export const newsletterTokenQuerySchema = z.object({ token: tokenSchema }).strict();
 
-export const newsletterPreferencesUpdateSchema = z.object({
-  token: tokenSchema,
-  newArticles: z.boolean().optional(),
-  strengthTraining: z.boolean().optional(),
-  workoutPrograms: z.boolean().optional(),
+export const newsletterTopicsSchema = z.object({
+  new_articles: z.boolean().optional(),
+  strength_training: z.boolean().optional(),
+  workout_programs: z.boolean().optional(),
   nutrition: z.boolean().optional(),
   supplements: z.boolean().optional(),
   equipment: z.boolean().optional(),
   tools: z.boolean().optional(),
-  guides: z.boolean().optional(),
+  guides: z.boolean().optional()
+}).strict().refine((topics) => Object.keys(topics).length > 0, {
+  message: 'Au moins un thème doit être fourni.'
+});
+
+export const newsletterPreferencesUpdateSchema = z.object({
+  token: tokenSchema,
+  topics: newsletterTopicsSchema.optional(),
   frequency: z.enum(['immediate', 'weekly', 'monthly']).optional(),
   goals: z.array(z.enum(newsletterGoals)).max(newsletterGoals.length).optional()
 }).strict().refine((value) => Object.keys(value).some((key) => key !== 'token'), {
