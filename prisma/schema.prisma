@@ -25,16 +25,88 @@ enum SeoEntityType {
   PAGE
 }
 
+enum NewsletterStatus {
+  pending
+  active
+  unsubscribed
+  bounced
+  complained
+}
+
+enum NewsletterFrequency {
+  immediate
+  weekly
+  monthly
+}
+
+enum NewsletterLanguage {
+  fr
+  en
+}
+
+enum NewsletterGoalType {
+  hypertrophy
+  fat_loss
+  strength
+  general_fitness
+}
+
 model NewsletterSubscriber {
-  id                 String    @id @default(cuid())
-  email              String    @unique
+  id                 String                     @id @default(cuid())
+  email              String                     @unique
+  status             NewsletterStatus           @default(pending)
+  language           NewsletterLanguage         @default(en)
   source             String?
   userAgent          String?
   notificationSentAt DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  consentAt          DateTime?
+  consentTextVersion String?
+  consentSource      String?
+  confirmedAt        DateTime?
+  unsubscribedAt     DateTime?
+  confirmationToken  String                     @unique
+  preferencesToken   String                     @unique
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  preferences        NewsletterPreference?
+  goals              NewsletterSubscriberGoal[]
 
+  @@index([status, language])
   @@index([createdAt])
+  @@map("newsletter_subscribers")
+}
+
+model NewsletterPreference {
+  id               String               @id @default(cuid())
+  subscriberId     String               @unique
+  subscriber       NewsletterSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  newArticles      Boolean              @default(true)
+  strengthTraining Boolean              @default(true)
+  workoutPrograms  Boolean              @default(true)
+  nutrition        Boolean              @default(true)
+  supplements      Boolean              @default(true)
+  equipment        Boolean              @default(true)
+  tools            Boolean              @default(true)
+  guides           Boolean              @default(true)
+  frequency        NewsletterFrequency  @default(weekly)
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([nutrition, frequency])
+  @@index([strengthTraining, frequency])
+  @@map("newsletter_preferences")
+}
+
+model NewsletterSubscriberGoal {
+  id           String               @id @default(cuid())
+  subscriberId String
+  subscriber   NewsletterSubscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  goal         NewsletterGoalType
+  createdAt    DateTime             @default(now())
+
+  @@unique([subscriberId, goal])
+  @@index([goal, subscriberId])
+  @@map("newsletter_subscriber_goals")
 }
 
 model FoodProductCache {
