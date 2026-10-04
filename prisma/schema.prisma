@@ -10,6 +10,24 @@ datasource db {
 enum UserRole {
   ADMIN
   EDITOR
+  USER
+}
+
+enum NutritionUnit {
+  G
+  ML
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  SNACK
+  DINNER
+}
+
+enum FoodSourceType {
+  OPEN_FOOD_FACTS
+  PERSONAL
 }
 
 enum PostStatus {
@@ -126,6 +144,88 @@ model User {
   displayName    String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+  nutritionGoals NutritionGoal[]
+  personalFoods  PersonalFood[]
+  nutritionDays  NutritionDay[]
+}
+
+model NutritionGoal {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  caloriesKcal    Decimal  @db.Decimal(18, 6)
+  proteinG        Decimal  @db.Decimal(18, 6)
+  carbohydratesG Decimal  @db.Decimal(18, 6)
+  fatG            Decimal  @db.Decimal(18, 6)
+  effectiveFrom   DateTime @db.Date
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, effectiveFrom])
+  @@index([userId, effectiveFrom])
+}
+
+model PersonalFood {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  brand           String?
+  basisAmount     Decimal         @db.Decimal(18, 6)
+  basisUnit       NutritionUnit
+  caloriesKcal    Decimal         @db.Decimal(18, 6)
+  proteinG        Decimal         @db.Decimal(18, 6)
+  carbohydratesG Decimal         @db.Decimal(18, 6)
+  fatG            Decimal         @db.Decimal(18, 6)
+  entries         FoodEntry[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model NutritionDay {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime    @db.Date
+  entries   FoodEntry[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+model FoodEntry {
+  id                      String         @id @default(cuid())
+  nutritionDayId          String
+  nutritionDay            NutritionDay   @relation(fields: [nutritionDayId], references: [id], onDelete: Cascade)
+  mealType                MealType
+  sourceType              FoodSourceType
+  productBarcode          String?
+  personalFoodId          String?
+  personalFood            PersonalFood?  @relation(fields: [personalFoodId], references: [id], onDelete: SetNull)
+  consumedAmount          Decimal        @db.Decimal(18, 6)
+  consumedUnit            NutritionUnit
+  snapshotName            String
+  snapshotBrand           String?
+  snapshotBasisAmount     Decimal        @db.Decimal(18, 6)
+  snapshotBasisUnit       NutritionUnit
+  snapshotCaloriesKcal    Decimal        @db.Decimal(18, 6)
+  snapshotProteinG        Decimal        @db.Decimal(18, 6)
+  snapshotCarbohydratesG  Decimal        @db.Decimal(18, 6)
+  snapshotFatG            Decimal        @db.Decimal(18, 6)
+  computedCaloriesKcal    Decimal        @db.Decimal(18, 6)
+  computedProteinG        Decimal        @db.Decimal(18, 6)
+  computedCarbohydratesG Decimal        @db.Decimal(18, 6)
+  computedFatG            Decimal        @db.Decimal(18, 6)
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  @@index([nutritionDayId, mealType])
+  @@index([personalFoodId])
+  @@index([productBarcode])
 }
 
 model Author {

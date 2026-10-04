@@ -8,6 +8,7 @@ Backend + admin **Node.js / TypeScript** pour alimenter un front Next.js externe
 - DB: PostgreSQL
 - Validation: Zod
 - Auth admin: JWT Bearer
+- Auth membres: JWT Bearer, séparée de l'authentification admin
 - Admin panel: `/admin` (V1 simple)
 
 ## Structure
@@ -78,6 +79,9 @@ npm run dev
 
 ## Endpoints publics (`/api`)
 - `GET /api/health`
+- `POST /api/auth/register` : crée exclusivement un compte `USER`
+- `POST /api/auth/login` : connecte exclusivement un compte `USER`
+- `GET /api/auth/me` : retourne le profil du membre authentifié, sans données d'authentification internes
 - `POST /api/newsletter/subscribe` : active immédiatement l'inscription avec consentement et tente d'envoyer l'e-mail de bienvenue Brevo
 - `POST /api/newsletter/confirm` : confirme une inscription avec son `confirmation_token`
 - `GET /api/newsletter/preferences?token=...` : lit le statut, la langue, les préférences et les objectifs associés au `preferences_token`
@@ -124,6 +128,21 @@ Une fiche trouvée sans nutrition conserve exactement la même structure (`nutri
 
 Les données sont attribuées à Open Food Facts via `source` et `sourceUrl`. Elles sont mises en cache dans PostgreSQL pendant 7 jours par défaut, puis rafraîchies au prochain accès.
 
+### Suivi nutritionnel authentifié
+
+Toutes les routes ci-dessous exigent un JWT de rôle `USER`. Le propriétaire est toujours déterminé par `request.authenticatedUser.userId`; aucun `userId` client n'est accepté.
+
+- `GET /api/nutrition/goals?date=YYYY-MM-DD` : objectif applicable à la date, ou `data: null`.
+- `PUT /api/nutrition/goals` : crée ou remplace l'objectif de sa date d'effet.
+- `GET /api/nutrition/goals/history` : historique décroissant des objectifs.
+- `GET|POST /api/nutrition/personal-foods` : liste et création des aliments personnels.
+- `GET|PATCH|DELETE /api/nutrition/personal-foods/:id` : gestion d'un aliment appartenant au membre.
+- `GET /api/nutrition/diary?date=YYYY-MM-DD` : journal, objectif, totaux et restant.
+- `POST /api/nutrition/diary/entries` : ajoute une consommation Open Food Facts ou personnelle.
+- `PATCH|DELETE /api/nutrition/diary/entries/:id` : modifie la quantité/le repas ou supprime une entrée appartenant au membre.
+
+Les quantités d'une entrée utilisent automatiquement l'unité de la source (`G` ou `ML`), sans conversion masse/volume. Les valeurs historiques sont calculées et conservées dans un snapshot. Les routes publiques `GET /api/nutrition/products/:barcode` et `GET /api/nutrition/search` restent accessibles sans authentification.
+
 ### Newsletter Body Training Guide
 
 L'inscription attend le payload suivant. L'adresse est normalisée côté serveur et le consentement doit être explicite :
@@ -158,6 +177,8 @@ Toutes les routes admin hors login exigent un header:
 ```http
 Authorization: Bearer <jwt>
 ```
+
+Le login et les routes `/admin-api` sont strictement réservés aux rôles `ADMIN` et `EDITOR`. Un JWT de rôle `USER` est refusé. La création d'utilisateurs depuis le back-office reste réservée à `ADMIN`.
 
 ## Déploiement Render (Node Web Service)
 **Root Directory**:

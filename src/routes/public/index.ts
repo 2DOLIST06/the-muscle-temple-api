@@ -24,6 +24,8 @@ import {
 import { buildRobotsTxt, buildSitemapXml } from '../../lib/seo/sitemap.js';
 import { foodRoutes } from './foods.js';
 import { newsletterRoutes } from './newsletter.js';
+import { publicAuthRoutes } from './auth.js';
+import { nutritionRoutes } from './nutrition.js';
 
 const getPublicPostWhere = (locale?: string) => ({
   status: PostStatus.PUBLISHED,
@@ -165,6 +167,8 @@ async function getTranslationsByGroup(fastify: Parameters<FastifyPluginAsync>[0]
 export const publicRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(foodRoutes);
   await fastify.register(newsletterRoutes);
+  await fastify.register(publicAuthRoutes);
+  await fastify.register(nutritionRoutes);
   fastify.get('/health', async () => ({ ok: true }));
 
   const sendEnglishSitemap = async (_request: unknown, reply: FastifyReply) => {
