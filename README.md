@@ -8,6 +8,7 @@ Backend + admin **Node.js / TypeScript** pour alimenter un front Next.js externe
 - DB: PostgreSQL
 - Validation: Zod
 - Auth admin: JWT Bearer
+- Auth membres: JWT Bearer, séparée de l'authentification admin
 - Admin panel: `/admin` (V1 simple)
 
 ## Structure
@@ -78,6 +79,9 @@ npm run dev
 
 ## Endpoints publics (`/api`)
 - `GET /api/health`
+- `POST /api/auth/register` : crée exclusivement un compte `USER`
+- `POST /api/auth/login` : connecte exclusivement un compte `USER`
+- `GET /api/auth/me` : retourne le profil du membre authentifié, sans données d'authentification internes
 - `POST /api/newsletter/subscribe` : active immédiatement l'inscription avec consentement et tente d'envoyer l'e-mail de bienvenue Brevo
 - `POST /api/newsletter/confirm` : confirme une inscription avec son `confirmation_token`
 - `GET /api/newsletter/preferences?token=...` : lit le statut, la langue, les préférences et les objectifs associés au `preferences_token`
@@ -158,6 +162,8 @@ Toutes les routes admin hors login exigent un header:
 ```http
 Authorization: Bearer <jwt>
 ```
+
+Le login et les routes `/admin-api` sont strictement réservés aux rôles `ADMIN` et `EDITOR`. Un JWT de rôle `USER` est refusé. La création d'utilisateurs depuis le back-office reste réservée à `ADMIN`.
 
 ## Déploiement Render (Node Web Service)
 **Root Directory**:

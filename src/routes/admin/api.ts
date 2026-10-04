@@ -196,7 +196,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
-    if (!isValid) {
+    if (!isValid || (user.role !== UserRole.ADMIN && user.role !== UserRole.EDITOR)) {
       if (env.AUTH_DEBUG) {
         request.log.warn({ email, reason: 'bad_password', statusCode: 401 }, 'Admin login rejected');
       }
@@ -227,7 +227,10 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
     protectedScope.addHook('preHandler', requireAdminAuth);
 
     protectedScope.get('/me', async (request) => {
-      const user = await fastify.prisma.user.findUnique({ where: { id: request.adminUser.userId } });
+      const user = await fastify.prisma.user.findUnique({
+        where: { id: request.adminUser.userId },
+        select: { id: true, email: true, role: true, displayName: true, createdAt: true, updatedAt: true }
+      });
       return { data: user };
     });
 
@@ -249,7 +252,8 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         const passwordHash = await bcrypt.hash(body.password, 10);
         const email = normalizeEmail(body.email);
         const user = await fastify.prisma.user.create({
-          data: { email, passwordHash, role: body.role, displayName: body.displayName }
+          data: { email, passwordHash, role: body.role, displayName: body.displayName },
+          select: { id: true, email: true, role: true, displayName: true, createdAt: true, updatedAt: true }
         });
         return { data: user };
       });
