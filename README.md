@@ -216,3 +216,36 @@ Variables Render obligatoires:
 - CORS valide explicitement les origines autorisées (front Next.js externe).
 - Seed idempotent pour éviter les duplications majeures.
 - Schéma Prisma avec slugs uniques, statuts de publication, SEO unifié, relations tags et articles liés.
+
+## Bannières d’affiliation
+
+`POST /admin-api/posts/affiliate-banner` exige le rôle `ADMIN` et accepte
+`{ ids: string[], source: string, name?: string, mode?: "native" | "isolated" }`.
+Limites : 200 identifiants, 100 000 caractères de code et 200 caractères de nom.
+Le code source n’est ni extrait ni tronqué : il est stocké intégralement dans un
+bloc `data-affiliate-block="banner"` à l’intérieur du contenu ordonné.
+
+Le traitement relit chaque article, ajoute le bloc en fin de contenu ou remplace
+l’unique bannière en conservant sa position. Les anciennes bannières multiples
+sont signalées sans modification, afin de choisir le bloc depuis l’éditeur.
+La réponse `data` contient `results` (id, status, message éventuel), `modified`,
+`unchanged` et `failed`. Les relances sont idempotentes et les écritures
+conditionnelles sur `updatedAt` protègent les modifications concurrentes.
+Seuls les champs du corps et `updatedAt` changent ; les autres traductions,
+statuts et métadonnées sont préservés.
+
+Les routes classiques de création/édition contrôlent aussi l’ajout de code actif
+pour empêcher un rôle `EDITOR` de contourner cette restriction. Les copies du
+format dans `src/lib/affiliate.ts` (API) et `lib/content/affiliate.ts` (front)
+doivent évoluer ensemble. Aucun changement de schéma ou migration n’est requis.
+Installer la dépendance `parse5`, puis générer le client Prisma et compiler
+normalement. Tests : `npm test`, dont `test/affiliate.test.ts`.
+
+Les sauvegardes du formulaire transmettent aussi `expectedUpdatedAt` : une copie périmée reçoit `409`, et l’écriture vérifie atomiquement la révision lue. Les clients API existants peuvent omettre ce champ ; ils doivent le transmettre pour détecter une copie datant d’avant la requête. Les routes de création/édition autorisent un corps HTTP de 4 Mo pour les codes encodés, sans troncature.
+
+
+### Tests d’affiliation avec PostgreSQL réel
+
+Le test `test/affiliate-postgres.integration.ts` n’utilise jamais la connexion de production. Fournir explicitement `AFFILIATE_TEST_DATABASE_URL` vers une base locale isolée nommée `btg_affiliate_test` (ou suffixée), ainsi que `ALLOW_AFFILIATE_POSTGRES_TESTS=1`, puis exécuter `npm run test:postgres`. Appliquer auparavant les migrations existantes uniquement sur cette base. La suite vérifie persistance/relecture, position, concurrence réelle (200/409), reprise d’un lot après une sauvegarde concurrente et erreur SQL partielle injectée par un trigger temporaire, suivie d’une reprise idempotente. Elle nettoie ses lignes et son trigger.
+
+La CI fournit son propre service PostgreSQL 16 et utilise le verrou npm suivi ; elle ne contacte aucune base distante et ne déploie pas l’application.

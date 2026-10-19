@@ -47,6 +47,7 @@ export const tagSchema = z.object({
 });
 
 export const postSchema = z.object({
+  expectedUpdatedAt: z.string().datetime().optional(),
   title: z.string().min(4),
   slug: z.string().optional(),
   locale: z.enum(SUPPORTED_POST_LOCALES).default('en'),

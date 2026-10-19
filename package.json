@@ -14,7 +14,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
     "admin:sync": "tsx prisma/sync-admin-user.ts",
-    "generate": "prisma generate"
+    "generate": "prisma generate",
+    "test:postgres": "tsx --test test/affiliate-postgres.integration.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
@@ -28,6 +29,7 @@
     "express": "^4.21.2",
     "fastify": "^4.28.1",
     "file-type": "^19.6.0",
+    "parse5": "^7.3.0",
     "prisma": "^6.6.0",
     "slugify": "^1.6.6",
     "zod": "^3.24.2"
