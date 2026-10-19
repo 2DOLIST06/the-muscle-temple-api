@@ -1,3 +1,5 @@
+import { activeContentSignature } from '../../lib/affiliate.js';
+import { affiliateRoutes } from './affiliate.js';
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
@@ -17,6 +19,10 @@ const pageSeoSchema = z.object({
   noIndex: z.boolean().optional().default(false),
   openGraphImageId: z.string().optional()
 });
+
+function activePostSignature(body: { contentHtml?: string | null; chapoHtml?: string | null }) {
+  return [activeContentSignature(body.contentHtml ?? ''), activeContentSignature(body.chapoHtml ?? '')].filter(Boolean).join('\n');
+}
 
 function uniqueIds(ids: string[]) {
   return [...new Set(ids.filter(Boolean))];
@@ -225,6 +231,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.register(async (protectedScope) => {
     protectedScope.addHook('preHandler', requireAdminAuth);
+    protectedScope.register(affiliateRoutes);
 
     protectedScope.get('/me', async (request) => {
       const user = await fastify.prisma.user.findUnique({
@@ -328,8 +335,10 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       };
     });
 
-    protectedScope.post('/posts', async (request, reply) => {
+    protectedScope.post('/posts', { bodyLimit: 4 * 1024 * 1024 }, async (request, reply) => {
       const body = postSchema.parse(request.body);
+      if (body.contentJson && !Array.isArray(body.contentJson) && typeof body.contentJson.html === 'string' && body.contentJson.html !== body.contentHtml) return reply.code(400).send({ message: 'contentHtml et contentJson.html doivent être identiques.' });
+      if (request.adminUser.role !== UserRole.ADMIN && activePostSignature(body)) return reply.code(403).send({ message: 'Seul un administrateur peut ajouter du code actif ou une bannière.' });
       const slug = body.slug ? makeSlug(body.slug) : makeSlug(body.title);
       const locale = body.locale;
       const providedTranslationGroupId = normalizeTranslationGroupId(body.translationGroupId);
@@ -436,12 +445,14 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
       return { data: serializeAdminPost(post) };
     });
 
-    protectedScope.put('/posts/:id', async (request, reply) => {
+    protectedScope.put('/posts/:id', { bodyLimit: 4 * 1024 * 1024 }, async (request, reply) => {
       const { id } = request.params as { id: string };
       const rawBody = request.body as { locale?: unknown } | null;
       const body = postSchema.parse(request.body);
+      if (body.contentJson && !Array.isArray(body.contentJson) && typeof body.contentJson.html === 'string' && body.contentJson.html !== body.contentHtml) return reply.code(400).send({ message: 'contentHtml et contentJson.html doivent être identiques.' });
       const existing = await fastify.prisma.post.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ message: 'Post not found' });
+      if (body.expectedUpdatedAt && new Date(body.expectedUpdatedAt).getTime() !== existing.updatedAt.getTime()) return reply.code(409).send({ message: 'Cet article a été modifié depuis son ouverture (par exemple par une action en lot). Rechargez-le avant de réappliquer vos changements.' });
 
       const requestedLocale = rawBody && Object.prototype.hasOwnProperty.call(rawBody, 'locale') ? body.locale : existing.locale;
       const isTranslationSave = requestedLocale !== existing.locale;
@@ -451,6 +462,7 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
           })
         : null;
       const shouldCreateTranslation = isTranslationSave && !targetTranslation;
+      if (request.adminUser.role !== UserRole.ADMIN && activePostSignature(body) !== activePostSignature(targetTranslation ?? (isTranslationSave ? {} : existing))) return reply.code(403).send({ message: 'Seul un administrateur peut ajouter ou remplacer du code actif ou une bannière.' });
       const targetPostId = targetTranslation?.id ?? id;
       const targetPublishedAt = targetTranslation?.publishedAt ?? existing.publishedAt;
 
@@ -531,12 +543,20 @@ export const adminApiRoutes: FastifyPluginAsync = async (fastify) => {
         coverImageId
       };
 
-      const saved = shouldCreateTranslation
-        ? await fastify.prisma.post.create({ data: postData })
-        : await fastify.prisma.post.update({
-            where: { id: targetPostId },
-            data: postData
-          });
+      let saved;
+      try {
+        saved = shouldCreateTranslation
+          ? await fastify.prisma.post.create({ data: postData })
+          : await fastify.prisma.post.update({
+              where: { id: targetPostId, updatedAt: (targetTranslation ?? existing).updatedAt },
+              data: { ...postData, updatedAt: new Date(Math.max(Date.now(), (targetTranslation ?? existing).updatedAt.getTime() + 1)) }
+            });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          return reply.code(409).send({ message: 'Cet article a été modifié simultanément. Rechargez-le avant de réappliquer vos changements.' });
+        }
+        throw error;
+      }
 
       await fastify.prisma.postTag.deleteMany({ where: { postId: saved.id } });
       if (tagIds.length) {
