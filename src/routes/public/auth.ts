@@ -1,8 +1,11 @@
+import { createHash, randomBytes } from 'node:crypto';
+import { env } from '../../config/env.js';
+import { sendBrevoTransactionalEmail } from '../../lib/email/brevo.js';
 import { Prisma, UserRole } from '@prisma/client';
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { requireUserAuth } from '../../lib/auth.js';
-import { publicLoginSchema, publicRegisterSchema } from '../../validation/auth.js';
+import { publicLoginSchema, publicRegisterSchema, loginLinkSchema, consumeLoginLinkSchema, changePasswordSchema } from '../../validation/auth.js';
 
 const safeUserSelect = {
   id: true,
@@ -59,7 +62,7 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const token = await reply.jwtSign(
-      { userId: user.id, email: user.email, role: user.role },
+      { userId: user.id, email: user.email, role: user.role, sessionVersion: user.sessionVersion ?? 0 },
       { expiresIn: '12h' }
     );
     return {
@@ -76,6 +79,74 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
     };
+  });
+
+  // Bounded, per-process IP limiter; the per-account cooldown below is shared in PostgreSQL.
+  const attempts = new Map<string, { count: number; until: number }>();
+  const limited = (ip: string) => {
+    const now = Date.now();
+    for (const [key, value] of attempts) if (value.until <= now) attempts.delete(key);
+    const entry = attempts.get(ip);
+    if (entry) return ++entry.count > 300;
+    if (attempts.size >= 10000) return true;
+    attempts.set(ip, { count: 1, until: now + 15 * 60_000 });
+    return false;
+  };
+  fastify.post('/auth/login-link', async (request, reply) => {
+    const body = loginLinkSchema.parse(request.body);
+    if (limited(request.ip)) return reply.code(429).send({ message: 'Please try again later' });
+    const user = await fastify.prisma.user.findUnique({ where: { email: body.email } });
+    const generic = { ok: true };
+    if (!user || user.role !== UserRole.USER) return generic;
+    const now = new Date();
+    const token = randomBytes(32).toString('hex');
+    const hash = createHash('sha256').update(token).digest('hex');
+    const claimed = await fastify.prisma.user.updateMany({
+      where: { id: user.id, role: UserRole.USER, OR: [{ loginLinkRequestedAt: null }, { loginLinkRequestedAt: { lt: new Date(now.getTime() - 60_000) } }] },
+      data: { loginTokenHash: hash, loginTokenExpiresAt: new Date(now.getTime() + 15 * 60_000), loginLinkRequestedAt: now }
+    });
+    if (!claimed.count) return generic;
+    try {
+      if (!env.FRONTEND_URL) throw new Error('FRONTEND_URL is required');
+      const url = new URL(body.locale === 'fr' ? '/fr/connexion/lien' : '/login/link', env.FRONTEND_URL);
+      url.hash = token;
+      const fr = body.locale === 'fr';
+      const subject = fr ? 'Votre lien de connexion Body Training Guide' : 'Your Body Training Guide sign-in link';
+      const label = fr ? 'Me connecter' : 'Sign in';
+      const detail = fr ? 'Ce lien est valable 15 minutes et utilisable une seule fois. Si vous ne l’avez pas demandé, ignorez ce message.' : 'This link expires in 15 minutes and can only be used once. If you did not request it, ignore this message.';
+      const link = url.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;');
+      await sendBrevoTransactionalEmail({ to: [{ email: user.email }], subject, htmlContent: `<p>Body Training Guide</p><p><a href="${link}">${label}</a></p><p>${detail}</p>`, textContent: `${label}: ${url.toString()}\n\n${detail}` });
+    } catch {
+      await fastify.prisma.user.updateMany({ where: { id: user.id, loginTokenHash: hash }, data: { loginTokenHash: null, loginTokenExpiresAt: null, loginLinkRequestedAt: null } });
+      request.log.error('Login link email delivery failed');
+    }
+    return generic;
+  });
+  fastify.post('/auth/login-link/consume', async (request, reply) => {
+    const { token } = consumeLoginLinkSchema.parse(request.body);
+    if (limited(request.ip)) return reply.code(429).send({ message: 'Please try again later' });
+    const hash = createHash('sha256').update(token).digest('hex');
+    const user = await fastify.prisma.$transaction(async tx => {
+      const found = await tx.user.findUnique({ where: { loginTokenHash: hash } });
+      if (!found || found.role !== UserRole.USER) return null;
+      const consumed = await tx.user.updateMany({ where: { id: found.id, role: UserRole.USER, loginTokenHash: hash, loginTokenExpiresAt: { gt: new Date() } }, data: { loginTokenHash: null, loginTokenExpiresAt: null } });
+      return consumed.count === 1 ? found : null;
+    });
+    if (!user) return reply.code(401).send({ message: 'Invalid or expired link' });
+    const session = await reply.jwtSign({ userId: user.id, email: user.email, role: user.role, sessionVersion: user.sessionVersion }, { expiresIn: '12h' });
+    return { token: session };
+  });
+  fastify.post('/auth/password', { preHandler: requireUserAuth }, async (request, reply) => {
+    const { password } = changePasswordSchema.parse(request.body);
+    const passwordHash = await bcrypt.hash(password, 10);
+    const updated = await fastify.prisma.user.updateMany({
+      where: { id: request.authenticatedUser.userId, role: UserRole.USER, sessionVersion: request.authenticatedUser.sessionVersion ?? 0 },
+      data: { passwordHash, sessionVersion: { increment: 1 }, loginTokenHash: null, loginTokenExpiresAt: null }
+    });
+    if (updated.count !== 1) return reply.code(401).send({ message: 'Unauthorized' });
+    const user = request.authenticatedUser;
+    const token = await reply.jwtSign({ userId: user.userId, email: user.email, role: user.role, sessionVersion: (user.sessionVersion ?? 0) + 1 }, { expiresIn: '12h' });
+    return { token };
   });
 
   fastify.get('/auth/me', { preHandler: requireUserAuth }, async (request, reply) => {

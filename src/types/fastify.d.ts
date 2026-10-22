@@ -7,11 +7,13 @@ declare module 'fastify' {
       userId: string;
       email: string;
       role: UserRole;
+      sessionVersion?: number;
     };
     adminUser: {
       userId: string;
       email: string;
       role: UserRole;
+      sessionVersion?: number;
     };
   }
 }

@@ -249,3 +249,15 @@ Les sauvegardes du formulaire transmettent aussi `expectedUpdatedAt` : une copie
 Le test `test/affiliate-postgres.integration.ts` n’utilise jamais la connexion de production. Fournir explicitement `AFFILIATE_TEST_DATABASE_URL` vers une base locale isolée nommée `btg_affiliate_test` (ou suffixée), ainsi que `ALLOW_AFFILIATE_POSTGRES_TESTS=1`, puis exécuter `npm run test:postgres`. Appliquer auparavant les migrations existantes uniquement sur cette base. La suite vérifie persistance/relecture, position, concurrence réelle (200/409), reprise d’un lot après une sauvegarde concurrente et erreur SQL partielle injectée par un trigger temporaire, suivie d’une reprise idempotente. Elle nettoie ses lignes et son trigger.
 
 La CI fournit son propre service PostgreSQL 16 et utilise le verrou npm suivi ; elle ne contacte aucune base distante et ne déploie pas l’application.
+
+### Member email sign-in
+
+Deploy the API and its migration before the frontend. Existing sessions remain valid until a password change.
+
+Reuses Brevo (`BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`). `FRONTEND_URL` must be the canonical frontend origin, e.g. `https://www.bodytrainingguide.com`. Verify delivery after deployment; tests stub Brevo.
+
+Login links use a random 256-bit token, stored only as SHA-256, expire after 15 minutes and are consumed atomically once. The URL fragment is removed on page load. A button consumes the link so mail scanners cannot consume it via GET. Responses do not reveal account existence. A shared database cooldown allows one mail per account per minute; a bounded process-local IP limiter allows 300 requests per 15 minutes (frontend proxy clients may share an IP). Delivery failures invalidate the token and log a generic error.
+
+Authenticated members can change their password without the old one (10 characters minimum, 72 UTF-8 bytes maximum). This invalidates previous member sessions and outstanding login links; the current browser receives a replacement HttpOnly session. Admin authentication is unchanged. Frontend write proxies check Origin.
+
+Account pages: `/fr/mon-compte`, `/account`. Link landing pages: `/fr/connexion/lien`, `/login/link`. API endpoints: POST `/api/auth/login-link` with `{ email, locale }`, POST `/api/auth/login-link/consume` with `{ token }`, authenticated POST `/api/auth/password` with `{ password }`.

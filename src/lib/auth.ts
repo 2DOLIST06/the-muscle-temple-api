@@ -5,6 +5,7 @@ export interface AuthenticatedUser {
   userId: string;
   email: string;
   role: UserRole;
+  sessionVersion?: number;
 }
 
 async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<AuthenticatedUser | null> {
@@ -32,6 +33,10 @@ export async function requireUserAuth(request: FastifyRequest, reply: FastifyRep
   if (!user) return;
   if (user.role !== UserRole.USER) {
     return reply.code(403).send({ message: 'Forbidden' });
+  }
+  const current = await request.server.prisma.user.findUnique({ where: { id: user.userId }, select: { role: true, sessionVersion: true } });
+  if (!current || current.role !== UserRole.USER || (current.sessionVersion ?? 0) !== (user.sessionVersion ?? 0)) {
+    return reply.code(401).send({ message: 'Unauthorized' });
   }
 }
 
