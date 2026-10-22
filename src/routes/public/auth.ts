@@ -97,7 +97,8 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
     if (limited(request.ip)) return reply.code(429).send({ message: 'Please try again later' });
     const user = await fastify.prisma.user.findUnique({ where: { email: body.email } });
     const generic = { ok: true };
-    if (!user || user.role !== UserRole.USER) return generic;
+    if (!user) return reply.code(404).send({ code: 'ACCOUNT_NOT_FOUND', message: 'No account with this email address' });
+    if (user.role !== UserRole.USER) return reply.code(403).send({ code: 'MEMBER_ACCOUNT_REQUIRED', message: 'This address is not a member account' });
     const now = new Date();
     const token = randomBytes(32).toString('hex');
     const hash = createHash('sha256').update(token).digest('hex');
@@ -105,7 +106,7 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id: user.id, role: UserRole.USER, OR: [{ loginLinkRequestedAt: null }, { loginLinkRequestedAt: { lt: new Date(now.getTime() - 60_000) } }] },
       data: { loginTokenHash: hash, loginTokenExpiresAt: new Date(now.getTime() + 15 * 60_000), loginLinkRequestedAt: now }
     });
-    if (!claimed.count) return generic;
+    if (!claimed.count) return reply.code(429).send({ code: 'LOGIN_LINK_COOLDOWN', message: 'Wait one minute before requesting a new link' });
     try {
       if (!env.FRONTEND_URL) throw new Error('FRONTEND_URL is required');
       const url = new URL(body.locale === 'fr' ? '/fr/connexion/lien' : '/login/link', env.FRONTEND_URL);
@@ -119,6 +120,7 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
     } catch {
       await fastify.prisma.user.updateMany({ where: { id: user.id, loginTokenHash: hash }, data: { loginTokenHash: null, loginTokenExpiresAt: null, loginLinkRequestedAt: null } });
       request.log.error('Login link email delivery failed');
+      return reply.code(503).send({ code: 'LOGIN_LINK_DELIVERY_FAILED', message: 'Unable to send sign-in email' });
     }
     return generic;
   });
