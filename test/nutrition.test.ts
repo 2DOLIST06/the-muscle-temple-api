@@ -24,6 +24,7 @@ function buildStore() {
   });
 
   const client: any = {
+    user: { async findUnique({ where }: any) { return ['a', 'b'].includes(where.id) ? { id: where.id, role: UserRole.USER, sessionVersion: 0 } : null; } },
     nutritionGoal: {
       async upsert({ where, create, update }: any) {
         const key = where.userId_effectiveFrom;
