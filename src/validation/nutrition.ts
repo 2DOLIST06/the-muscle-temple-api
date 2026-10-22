@@ -39,10 +39,17 @@ export const personalFoodPatchSchema = personalFoodCreateSchema.partial().refine
 
 export const nutritionIdParamSchema = z.object({ id: z.string().trim().min(1) }).strict();
 
+export const recurrenceSchema = z.object({
+  startDate: calendarDateSchema,
+  endDate: calendarDateSchema.nullable().optional(),
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).default([0, 1, 2, 3, 4, 5, 6])
+}).strict().refine(value => !value.endDate || value.endDate >= value.startDate, 'La fin doit suivre le début.');
+
 const diaryEntryBase = {
   date: calendarDateSchema,
   mealType: z.nativeEnum(MealType),
-  consumedAmount: positiveAmount
+  consumedAmount: positiveAmount,
+  recurrence: recurrenceSchema.optional()
 };
 
 export const diaryEntryCreateSchema = z.discriminatedUnion('sourceType', [
