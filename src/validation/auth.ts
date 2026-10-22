@@ -19,3 +19,13 @@ export const consumeLoginLinkSchema = z.object({ token: z.string().regex(/^[a-f0
 export const changePasswordSchema = z.object({
   password: z.string().min(10).refine(value => Buffer.byteLength(value, 'utf8') <= 72, 'Password is too long')
 }).strict();
+
+export const profileSchema = z.object({
+  firstName: z.string().trim().max(100),
+  lastName: z.string().trim().max(100),
+  phone: z.string().trim().max(40),
+  address: z.string().trim().max(250),
+  postalCode: z.string().trim().max(20),
+  city: z.string().trim().max(100),
+  country: z.string().trim().max(100)
+}).strict();
