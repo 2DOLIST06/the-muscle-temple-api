@@ -12,6 +12,7 @@ const decimal = (value: Prisma.Decimal.Value) => new Prisma.Decimal(value);
 const dateKey = (value: Date) => value.toISOString().slice(0, 10);
 
 function buildStore() {
+  const rules: any[] = [];
   const goals: any[] = [];
   const foods: any[] = [];
   const days: any[] = [];
@@ -24,6 +25,13 @@ function buildStore() {
   });
 
   const client: any = {
+    $queryRaw: async () => [],
+    foodRecurrence: {
+      async create({ data }: any) { const rule = { id: id('rule'), ...data, createdAt: now }; rules.push(rule); return rule; },
+      async findMany({ where }: any) { return rules.filter(rule => rule.userId === where.userId && (!where.startDate || rule.startDate <= where.startDate.lte) && (!rule.endDate || rule.endDate >= where.OR[1].endDate.gte) && (!where.weekdays || rule.weekdays.includes(where.weekdays.has))); },
+      async findFirst({ where }: any) { return rules.find(rule => rule.id === where.id && rule.userId === where.userId) ?? null; },
+      async update({ where, data }: any) { const rule = rules.find(rule => rule.id === where.id); Object.assign(rule, data); return rule; }
+    },
     user: { async findUnique({ where }: any) { return ['a', 'b'].includes(where.id) ? { id: where.id, role: UserRole.USER, sessionVersion: 0 } : null; } },
     nutritionGoal: {
       async upsert({ where, create, update }: any) {
@@ -83,13 +91,22 @@ function buildStore() {
       async findUnique({ where }: any) {
         const key = where.userId_date;
         const day = days.find((item) => item.userId === key.userId && dateKey(item.date) === dateKey(key.date));
-        return day ? { ...day, entries: entries.filter((entry) => entry.nutritionDayId === day.id) } : null;
+        return day ? { ...day, entries: entries.filter((entry) => entry.nutritionDayId === day.id && !entry.isDeleted) } : null;
       }
     },
     foodEntry: {
+      async upsert({ where, create }: any) {
+        const key = where.recurrenceId_nutritionDayId;
+        return entries.find(entry => entry.recurrenceId === key.recurrenceId && entry.nutritionDayId === key.nutritionDayId) ?? client.foodEntry.create({ data: create });
+      },
+      async updateMany({ where, data }: any) {
+        const entry = entries.find(entry => entry.id === where.id && !entry.isDeleted && days.some(day => day.id === entry.nutritionDayId && day.userId === where.nutritionDay.userId));
+        if (!entry) return { count: 0 };
+        Object.assign(entry, data); return { count: 1 };
+      },
       async create({ data }: any) {
         const entry = {
-          id: id('entry'), ...data,
+          id: id('entry'), isDeleted: false, ...data,
           consumedAmount: decimal(data.consumedAmount), snapshotBasisAmount: decimal(data.snapshotBasisAmount),
           snapshotCaloriesKcal: decimal(data.snapshotCaloriesKcal), snapshotProteinG: decimal(data.snapshotProteinG),
           snapshotCarbohydratesG: decimal(data.snapshotCarbohydratesG), snapshotFatG: decimal(data.snapshotFatG),
@@ -101,7 +118,7 @@ function buildStore() {
         return entry;
       },
       async findFirst({ where }: any) {
-        return entries.find((entry) => entry.id === where.id && days.some((day) => day.id === entry.nutritionDayId && day.userId === where.nutritionDay.userId)) ?? null;
+        return entries.find((entry) => entry.id === where.id && !entry.isDeleted && days.some((day) => day.id === entry.nutritionDayId && day.userId === where.nutritionDay.userId)) ?? null;
       },
       async update({ where, data }: any) {
         const entry = entries.find((item) => item.id === where.id);
@@ -112,15 +129,18 @@ function buildStore() {
         return entry;
       },
       async deleteMany({ where }: any) {
-        const index = entries.findIndex((entry) => entry.id === where.id && days.some((day) => day.id === entry.nutritionDayId && day.userId === where.nutritionDay.userId));
-        if (index < 0) return { count: 0 };
-        entries.splice(index, 1);
-        return { count: 1 };
+        let count = 0;
+        for (let index = entries.length - 1; index >= 0; index--) {
+          const entry = entries[index];
+          const day = days.find(day => day.id === entry.nutritionDayId);
+          if ((where.id ? entry.id === where.id : entry.recurrenceId === where.recurrenceId) && day?.userId === where.nutritionDay.userId && (!where.nutritionDay.date || day.date >= where.nutritionDay.date.gte)) { entries.splice(index, 1); count++; }
+        }
+        return { count };
       }
     }
   };
   client.$transaction = async (callback: (tx: any) => unknown) => callback(client);
-  return { prisma: client as PrismaClient, goals, foods, days, entries };
+  return { prisma: client as PrismaClient, goals, foods, days, entries, rules };
 }
 
 function product(overrides: Partial<FoodProduct> = {}): FoodProduct {
@@ -220,4 +240,58 @@ test('diary rejects incomplete OFF nutrition and strict ownership fields', async
   assert.equal(response.json().code, 'INCOMPLETE_NUTRITION_DATA');
   assert.equal((await request('b', { method: 'POST', url: '/api/nutrition/personal-foods', payload: { userId: 'a', name: 'Test', basisAmount: 100, basisUnit: NutritionUnit.G, caloriesKcal: 1, proteinG: 1, carbohydratesG: 1, fatG: 1 } })).statusCode, 400);
   await app.close();
+});
+
+
+test('recurrences respect weekdays and inclusive periods, keep exceptions and stop without removing history', async () => {
+  const { app, request, store } = await buildApp();
+  try {
+    const input = { date: '2026-10-22', mealType: 'BREAKFAST', sourceType: 'OPEN_FOOD_FACTS', barcode: '4006381333931', consumedAmount: 150 };
+    for (const recurrence of [{ startDate: '2026-10-22', endDate: '2026-10-21' }, { startDate: '2026-10-22', weekdays: [] }, { startDate: '2026-10-22', weekdays: [7] }]) {
+      assert.equal((await request('a', { method: 'POST', url: '/api/nutrition/diary/entries', payload: { ...input, recurrence } })).statusCode, 400);
+    }
+    const created = await request('a', { method: 'POST', url: '/api/nutrition/diary/entries', payload: { ...input, recurrence: { startDate: '2026-10-23', endDate: '2026-11-07', weekdays: [5, 6] } } });
+    assert.equal(created.statusCode, 201); const id = created.json().data.id;
+    const diary = async (date: string, member = 'a') => (await request(member, { method: 'GET', url: `/api/nutrition/diary?date=${date}` })).json().data;
+    assert.equal((await diary('2026-10-22')).entries.length, 0);
+    assert.equal((await diary('2026-10-23', 'b')).entries.length, 0);
+    const friday = await diary('2026-10-23');
+    assert.equal(friday.entries.length, 1); assert.equal(friday.totals.caloriesKcal, 300);
+    assert.equal((await diary('2026-10-23')).entries.length, 1, 'reload must not duplicate occurrences');
+    assert.equal((await diary('2026-10-24')).entries.length, 1);
+    assert.equal((await diary('2026-10-25')).entries.length, 0);
+    assert.equal((await diary('2026-11-07')).entries.length, 1, 'end date is inclusive');
+    assert.equal((await diary('2026-11-13')).entries.length, 0);
+    assert.equal((await request('a', { method: 'PATCH', url: `/api/nutrition/diary/entries/${friday.entries[0].id}`, payload: { consumedAmount: 50 } })).statusCode, 200);
+    assert.equal((await diary('2026-10-23')).totals.caloriesKcal, 100, 'edited occurrence survives reload');
+    assert.equal((await request('a', { method: 'DELETE', url: `/api/nutrition/diary/entries/${friday.entries[0].id}` })).statusCode, 204);
+    assert.equal((await diary('2026-10-23')).entries.length, 0, 'deleted occurrence is not regenerated');
+    assert.equal((await request('b', { method: 'POST', url: `/api/nutrition/recurrences/${id}/stop`, payload: { date: '2026-10-30' } })).statusCode, 404);
+    assert.equal((await request('a', { method: 'POST', url: `/api/nutrition/recurrences/${id}/stop`, payload: { date: '2026-10-30' } })).statusCode, 200);
+    assert.equal((await diary('2026-10-24')).entries.length, 1, 'history preserved');
+    assert.equal((await diary('2026-10-30')).entries.length, 0);
+    assert.equal((await diary('2026-11-07')).entries.length, 0, 'previously viewed future occurrences removed');
+    const daily = await request('a', { method: 'POST', url: '/api/nutrition/diary/entries', payload: { ...input, recurrence: { startDate: '2026-10-25' } } });
+    assert.equal(daily.statusCode, 201);
+    assert.equal(store.rules.at(-1).weekdays.length, 7);
+    assert.equal((await diary('2027-01-01')).entries.length, 1, 'no end date works beyond current period');
+    assert.equal((await request('b', { method: 'GET', url: '/api/nutrition/recurrences?date=2026-10-22' })).json().data.length, 0);
+  } finally { await app.close(); }
+});
+
+test('recurring custom food keeps its nutrition snapshot after the source food is deleted', async () => {
+  const { app, request } = await buildApp();
+  try {
+    const created = await request('a', { method: 'POST', url: '/api/nutrition/personal-foods', payload: { name: 'Homemade breakfast', basisAmount: 100, basisUnit: 'G', caloriesKcal: 200, proteinG: 12, carbohydratesG: 20, fatG: 8 } });
+    const foodId = created.json().data.id;
+    const recurring = await request('a', { method: 'POST', url: '/api/nutrition/diary/entries', payload: { date: '2026-10-22', mealType: 'BREAKFAST', consumedAmount: 200, sourceType: 'PERSONAL', personalFoodId: foodId, recurrence: { startDate: '2026-10-22' } } });
+    assert.equal(recurring.statusCode, 201);
+    assert.equal((await request('a', { method: 'DELETE', url: `/api/nutrition/personal-foods/${foodId}` })).statusCode, 204);
+    const future = await request('a', { method: 'GET', url: '/api/nutrition/diary?date=2026-11-15' });
+    assert.equal(future.statusCode, 200);
+    assert.equal(future.json().data.entries[0].snapshotName, 'Homemade breakfast');
+    assert.equal(future.json().data.entries[0].personalFoodId, null);
+    assert.equal(future.json().data.totals.caloriesKcal, 400);
+    assert.equal(future.json().data.totals.proteinG, 24);
+  } finally { await app.close(); }
 });

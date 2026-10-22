@@ -159,6 +159,7 @@ model User {
   nutritionGoals NutritionGoal[]
   personalFoods  PersonalFood[]
   nutritionDays  NutritionDay[]
+  foodRecurrences FoodRecurrence[]
 }
 
 model NutritionGoal {
@@ -235,6 +236,11 @@ model FoodEntry {
   createdAt               DateTime       @default(now())
   updatedAt               DateTime       @updatedAt
 
+  recurrenceId String?
+  recurrence FoodRecurrence? @relation(fields: [recurrenceId], references: [id], onDelete: SetNull)
+  isDeleted Boolean @default(false)
+
+  @@unique([recurrenceId, nutritionDayId])
   @@index([nutritionDayId, mealType])
   @@index([personalFoodId])
   @@index([productBarcode])
@@ -377,4 +383,17 @@ model SeoMetadata {
   updatedAt        DateTime       @updatedAt
 
   @@index([entityType])
+}
+
+model FoodRecurrence {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate DateTime @db.Date
+  endDate DateTime? @db.Date
+  weekdays Int[]
+  template Json
+  entries FoodEntry[]
+  createdAt DateTime @default(now())
+  @@index([userId, startDate])
 }

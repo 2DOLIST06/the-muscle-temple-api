@@ -265,6 +265,22 @@ export const nutritionRoutes: FastifyPluginAsync<NutritionRoutesOptions> = async
       const { date } = nutritionDateQuerySchema.parse(request.query);
       const userId = request.authenticatedUser.userId;
       const requestedDate = calendarDate(date);
+      // One occurrence per rule/day; tombstones preserve a deletion on subsequent reads.
+      await fastify.prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        const rules = await tx.foodRecurrence.findMany({
+          where: { userId, startDate: { lte: requestedDate }, OR: [{ endDate: null }, { endDate: { gte: requestedDate } }], weekdays: { has: requestedDate.getUTCDay() } }
+        });
+        if (!rules.length) return;
+        const day = await tx.nutritionDay.upsert({ where: { userId_date: { userId, date: requestedDate } }, create: { userId, date: requestedDate }, update: {} });
+        for (const rule of rules) {
+          const template = rule.template as unknown as Omit<Prisma.FoodEntryUncheckedCreateInput, 'nutritionDayId'>;
+          await tx.foodEntry.upsert({
+            where: { recurrenceId_nutritionDayId: { recurrenceId: rule.id, nutritionDayId: day.id } },
+            create: { ...template, nutritionDayId: day.id, recurrenceId: rule.id }, update: {}
+          });
+        }
+      });
       const [goal, day] = await Promise.all([
         fastify.prisma.nutritionGoal.findFirst({
           where: { userId, effectiveFrom: { lte: requestedDate } },
@@ -272,7 +288,7 @@ export const nutritionRoutes: FastifyPluginAsync<NutritionRoutesOptions> = async
         }),
         fastify.prisma.nutritionDay.findUnique({
           where: { userId_date: { userId, date: requestedDate } },
-          include: { entries: { orderBy: { createdAt: 'asc' } } }
+          include: { entries: { where: { isDeleted: false }, orderBy: { createdAt: 'asc' } } }
         })
       ]);
       const entries = day?.entries ?? [];
@@ -375,6 +391,15 @@ export const nutritionRoutes: FastifyPluginAsync<NutritionRoutesOptions> = async
         fatG: snapshot.snapshotFatG
       }, body.consumedAmount, snapshot.snapshotBasisAmount);
 
+      if (body.recurrence) {
+        const template = JSON.parse(JSON.stringify({ mealType: body.mealType, consumedAmount: body.consumedAmount, ...snapshot, personalFoodId: null, ...computed })) as Prisma.InputJsonValue;
+        const rule = await fastify.prisma.foodRecurrence.create({ data: {
+          userId, startDate: calendarDate(body.recurrence.startDate),
+          endDate: body.recurrence.endDate ? calendarDate(body.recurrence.endDate) : null,
+          weekdays: [...new Set(body.recurrence.weekdays)], template
+        } });
+        return reply.code(201).send({ data: { id: rule.id, recurring: true } });
+      }
       const entry = await fastify.prisma.$transaction(async (tx) => {
         const day = await tx.nutritionDay.upsert({
           where: { userId_date: { userId, date: calendarDate(body.date) } },
@@ -400,7 +425,7 @@ export const nutritionRoutes: FastifyPluginAsync<NutritionRoutesOptions> = async
       const userId = request.authenticatedUser.userId;
       const updated = await fastify.prisma.$transaction(async (tx) => {
         const entry = await tx.foodEntry.findFirst({
-          where: { id, nutritionDay: { userId } }
+          where: { id, isDeleted: false, nutritionDay: { userId } }
         });
         if (!entry) return null;
         const computed = body.consumedAmount === undefined ? {} : calculateConsumedMacros({
@@ -418,10 +443,42 @@ export const nutritionRoutes: FastifyPluginAsync<NutritionRoutesOptions> = async
       return { data: serializeEntry(updated) };
     });
 
+    protectedRoutes.get('/nutrition/recurrences', async request => {
+      const { date } = nutritionDateQuerySchema.parse(request.query);
+      const rules = await fastify.prisma.foodRecurrence.findMany({
+        where: { userId: request.authenticatedUser.userId, OR: [{ endDate: null }, { endDate: { gte: calendarDate(date) } }] }, orderBy: { createdAt: 'asc' }
+      });
+      return { data: rules.map(rule => ({ id: rule.id, startDate: dateString(rule.startDate), endDate: rule.endDate ? dateString(rule.endDate) : null, weekdays: rule.weekdays, name: (rule.template as Record<string, unknown>).snapshotName, mealType: (rule.template as Record<string, unknown>).mealType })) };
+    });
+
+    protectedRoutes.post('/nutrition/recurrences/:id/stop', async (request, reply) => {
+      const { id } = nutritionIdParamSchema.parse(request.params);
+      const { date } = nutritionDateQuerySchema.parse(request.body);
+      const from = calendarDate(date);
+      const stopped = await fastify.prisma.$transaction(async tx => {
+        // Serialize with diary generation so stopping cannot leave future occurrences behind.
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${request.authenticatedUser.userId} FOR UPDATE`;
+        const rule = await tx.foodRecurrence.findFirst({ where: { id, userId: request.authenticatedUser.userId } });
+        if (!rule) return false;
+        const end = new Date(from.getTime() - 86400000);
+        await tx.foodRecurrence.update({ where: { id }, data: { endDate: rule.endDate && rule.endDate < end ? rule.endDate : end } });
+        await tx.foodEntry.deleteMany({ where: { recurrenceId: id, nutritionDay: { userId: request.authenticatedUser.userId, date: { gte: from } } } });
+        return true;
+      });
+      if (!stopped) return reply.code(404).send({ message: 'Recurrence not found' });
+      return { data: { ok: true } };
+    });
+
     protectedRoutes.delete('/nutrition/diary/entries/:id', async (request, reply) => {
       const { id } = nutritionIdParamSchema.parse(request.params);
-      const result = await fastify.prisma.foodEntry.deleteMany({
-        where: { id, nutritionDay: { userId: request.authenticatedUser.userId } }
+      const result = await fastify.prisma.$transaction(async tx => {
+        const where = { id, isDeleted: false, nutritionDay: { userId: request.authenticatedUser.userId } };
+        const entry = await tx.foodEntry.findFirst({ where });
+        if (!entry) return { count: 0 };
+        // Only recurring entries need a tombstone to prevent automatic regeneration.
+        return entry.recurrenceId
+          ? tx.foodEntry.updateMany({ where, data: { isDeleted: true } })
+          : tx.foodEntry.deleteMany({ where });
       });
       if (result.count === 0) return reply.code(404).send({ message: 'Food entry not found' });
       return reply.code(204).send();
