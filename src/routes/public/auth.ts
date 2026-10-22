@@ -5,12 +5,19 @@ import { Prisma, UserRole } from '@prisma/client';
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { requireUserAuth } from '../../lib/auth.js';
-import { publicLoginSchema, publicRegisterSchema, loginLinkSchema, consumeLoginLinkSchema, changePasswordSchema } from '../../validation/auth.js';
+import { publicLoginSchema, publicRegisterSchema, loginLinkSchema, consumeLoginLinkSchema, changePasswordSchema, profileSchema } from '../../validation/auth.js';
 
 const safeUserSelect = {
   id: true,
   email: true,
   displayName: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  address: true,
+  postalCode: true,
+  city: true,
+  country: true,
   role: true,
   createdAt: true,
   updatedAt: true
@@ -131,7 +138,7 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
     const user = await fastify.prisma.$transaction(async tx => {
       const found = await tx.user.findUnique({ where: { loginTokenHash: hash } });
       if (!found || found.role !== UserRole.USER) return null;
-      const consumed = await tx.user.updateMany({ where: { id: found.id, role: UserRole.USER, loginTokenHash: hash, loginTokenExpiresAt: { gt: new Date() } }, data: { loginTokenHash: null, loginTokenExpiresAt: null } });
+      const consumed = await tx.user.updateMany({ where: { id: found.id, role: UserRole.USER, loginTokenHash: hash, loginTokenExpiresAt: { gt: new Date() } }, data: { loginTokenHash: null, loginTokenExpiresAt: null, emailVerifiedAt: new Date() } });
       return consumed.count === 1 ? found : null;
     });
     if (!user) return reply.code(401).send({ message: 'Invalid or expired link' });
@@ -149,6 +156,27 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
     const user = request.authenticatedUser;
     const token = await reply.jwtSign({ userId: user.userId, email: user.email, role: user.role, sessionVersion: (user.sessionVersion ?? 0) + 1 }, { expiresIn: '12h' });
     return { token };
+  });
+
+  fastify.post('/auth/profile', { preHandler: requireUserAuth }, async (request) => {
+    const body = profileSchema.parse(request.body);
+    const data = Object.fromEntries(Object.entries(body).map(([key, value]) => [key, value || null]));
+    const user = await fastify.prisma.user.update({
+      where: { id: request.authenticatedUser.userId }, data, select: safeUserSelect
+    });
+    return { data: user };
+  });
+
+  fastify.get('/auth/newsletter', { preHandler: requireUserAuth }, async (request, reply) => {
+    const user = await fastify.prisma.user.findUniqueOrThrow({
+      where: { id: request.authenticatedUser.userId }, select: { email: true, emailVerifiedAt: true }
+    });
+    // Password registration alone does not prove ownership of an existing newsletter address.
+    if (!user.emailVerifiedAt) return reply.code(403).send({ code: 'EMAIL_VERIFICATION_REQUIRED' });
+    const subscriber = await fastify.prisma.newsletterSubscriber.findUnique({
+      where: { email: user.email }, select: { preferencesToken: true, status: true }
+    });
+    return { data: { token: subscriber?.preferencesToken ?? null, status: subscriber?.status ?? null } };
   });
 
   fastify.get('/auth/me', { preHandler: requireUserAuth }, async (request, reply) => {

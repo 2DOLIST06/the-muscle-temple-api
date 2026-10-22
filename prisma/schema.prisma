@@ -148,6 +148,14 @@ model User {
   loginTokenHash String? @unique
   loginTokenExpiresAt DateTime?
   loginLinkRequestedAt DateTime?
+  firstName      String?
+  lastName       String?
+  phone          String?
+  address        String?
+  postalCode     String?
+  city           String?
+  country        String?
+  emailVerifiedAt DateTime?
   nutritionGoals NutritionGoal[]
   personalFoods  PersonalFood[]
   nutritionDays  NutritionDay[]
