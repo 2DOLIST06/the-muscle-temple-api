@@ -37,14 +37,21 @@ test('email login is single-use, expires, excludes admins and rotates password s
     const post = (path: string, payload: any, token?: string) => app.inject({ method: 'POST', url: `/api/auth/${path}`, payload, headers: token ? { authorization: `Bearer ${token}` } : {} });
     const login = await post('login', { email: member.email, password: 'OriginalPassword!' });
     const oldSession = login.json().token;
-    for (const email of ['missing@example.com', admin.email, member.email]) assert.deepEqual((await post('login-link', { email, locale: 'fr' })).json(), { ok: true });
+    const missing = await post('login-link', { email: 'missing@example.com', locale: 'fr' });
+    assert.equal(missing.statusCode, 404);
+    assert.equal(missing.json().code, 'ACCOUNT_NOT_FOUND');
+    const adminLink = await post('login-link', { email: admin.email, locale: 'fr' });
+    assert.equal(adminLink.statusCode, 403);
+    assert.equal(adminLink.json().code, 'MEMBER_ACCOUNT_REQUIRED');
+    assert.equal(messages.length, 0, 'ineligible accounts do not trigger email');
+    assert.deepEqual((await post('login-link', { email: member.email, locale: 'fr' })).json(), { ok: true });
     assert.equal(messages.length, 1);
     assert.equal(messages[0].subject, 'Votre lien de connexion Body Training Guide');
     const link = messages[0].textContent.split('\n')[0].replace('Me connecter: ', '');
     const token = new URL(link).hash.slice(1);
     assert.equal(member.loginTokenHash, createHash('sha256').update(token).digest('hex'));
     assert.notEqual(member.loginTokenHash, token);
-    await post('login-link', { email: member.email }); assert.equal(messages.length, 1, 'cooldown');
+    assert.equal((await post('login-link', { email: member.email })).statusCode, 429); assert.equal(messages.length, 1, 'cooldown');
     assert.equal((await post('login-link/consume', { token: '0'.repeat(64) })).statusCode, 401);
     const consumed = await post('login-link/consume', { token }); assert.equal(consumed.statusCode, 200);
     assert.equal((await post('login-link/consume', { token })).statusCode, 401, 'replay rejected');
@@ -63,7 +70,7 @@ test('email login is single-use, expires, excludes admins and rotates password s
     assert.equal((await post('login-link/consume', { token: expired })).statusCode, 401);
     member.loginLinkRequestedAt = null;
     globalThis.fetch = async () => { throw new Error('provider unavailable'); };
-    assert.equal((await post('login-link', { email: member.email })).statusCode, 200);
+    assert.equal((await post('login-link', { email: member.email })).statusCode, 503);
     assert.equal(member.loginTokenHash, null, 'failed sends invalidate the token');
   } finally { globalThis.fetch = originalFetch; await app.close(); }
 });
