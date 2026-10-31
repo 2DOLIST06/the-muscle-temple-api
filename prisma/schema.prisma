@@ -88,6 +88,7 @@ model NewsletterSubscriber {
   updatedAt          DateTime                   @updatedAt
   preferences        NewsletterPreference?
   goals              NewsletterSubscriberGoal[]
+  account            User?
 
   @@index([status, language])
   @@index([createdAt])
@@ -156,6 +157,8 @@ model User {
   city           String?
   country        String?
   emailVerifiedAt DateTime?
+  newsletterSubscriberId String? @unique
+  newsletterSubscriber NewsletterSubscriber? @relation(fields: [newsletterSubscriberId], references: [id], onDelete: SetNull)
   nutritionGoals NutritionGoal[]
   personalFoods  PersonalFood[]
   nutritionDays  NutritionDay[]

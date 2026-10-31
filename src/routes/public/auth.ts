@@ -1,9 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { env } from '../../config/env.js';
-import { sendBrevoTransactionalEmail } from '../../lib/email/brevo.js';
 import { Prisma, UserRole } from '@prisma/client';
 import { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
+import { sendMemberLink } from '../../lib/email/member-link.js';
 import { requireUserAuth } from '../../lib/auth.js';
 import { publicLoginSchema, publicRegisterSchema, loginLinkSchema, consumeLoginLinkSchema, changePasswordSchema, profileSchema } from '../../validation/auth.js';
 
@@ -49,7 +48,8 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
         },
         select: safeUserSelect
       });
-      return reply.code(201).send({ data: user });
+      const token=await reply.jwtSign({userId:user.id,email:user.email,role:user.role,sessionVersion:0},{expiresIn:'12h'});
+      return reply.code(201).send({ token, data: user });
     } catch (error) {
       if (isUniqueConstraintError(error)) {
         return reply.code(409).send({ message: 'Email already in use' });
@@ -102,39 +102,34 @@ export const publicAuthRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/auth/login-link', async (request, reply) => {
     const body = loginLinkSchema.parse(request.body);
     if (limited(request.ip)) return reply.code(429).send({ message: 'Please try again later' });
-    const user = await fastify.prisma.user.findUnique({ where: { email: body.email } });
+    let user = await fastify.prisma.user.findUnique({ where: { email: body.email } });
+    if (!user && await fastify.prisma.newsletterSubscriber.findUnique({where:{email:body.email}})) {
+      user = await fastify.prisma.user.upsert({where:{email:body.email},update:{},create:{email:body.email,displayName:'',passwordHash:await bcrypt.hash(randomBytes(48).toString('hex'),10),role:UserRole.USER}});
+    }
     const generic = { ok: true };
     if (!user) return reply.code(404).send({ code: 'ACCOUNT_NOT_FOUND', message: 'No account with this email address' });
     if (user.role !== UserRole.USER) return reply.code(403).send({ code: 'MEMBER_ACCOUNT_REQUIRED', message: 'This address is not a member account' });
-    const now = new Date();
-    const token = randomBytes(32).toString('hex');
-    const hash = createHash('sha256').update(token).digest('hex');
-    const claimed = await fastify.prisma.user.updateMany({
-      where: { id: user.id, role: UserRole.USER, OR: [{ loginLinkRequestedAt: null }, { loginLinkRequestedAt: { lt: new Date(now.getTime() - 60_000) } }] },
-      data: { loginTokenHash: hash, loginTokenExpiresAt: new Date(now.getTime() + 15 * 60_000), loginLinkRequestedAt: now }
-    });
-    if (!claimed.count) return reply.code(429).send({ code: 'LOGIN_LINK_COOLDOWN', message: 'Wait one minute before requesting a new link' });
-    try {
-      if (!env.FRONTEND_URL) throw new Error('FRONTEND_URL is required');
-      const url = new URL(body.locale === 'fr' ? '/fr/connexion/lien' : '/login/link', env.FRONTEND_URL);
-      url.hash = token;
-      const fr = body.locale === 'fr';
-      const subject = fr ? 'Votre lien de connexion Body Training Guide' : 'Your Body Training Guide sign-in link';
-      const label = fr ? 'Me connecter' : 'Sign in';
-      const detail = fr ? 'Ce lien est valable 15 minutes et utilisable une seule fois. Si vous ne l’avez pas demandé, ignorez ce message.' : 'This link expires in 15 minutes and can only be used once. If you did not request it, ignore this message.';
-      const link = url.toString().replaceAll('&', '&amp;').replaceAll('"', '&quot;');
-      await sendBrevoTransactionalEmail({ to: [{ email: user.email }], subject, htmlContent: `<p>Body Training Guide</p><p><a href="${link}">${label}</a></p><p>${detail}</p>`, textContent: `${label}: ${url.toString()}\n\n${detail}` });
-    } catch {
-      await fastify.prisma.user.updateMany({ where: { id: user.id, loginTokenHash: hash }, data: { loginTokenHash: null, loginTokenExpiresAt: null, loginLinkRequestedAt: null } });
-      request.log.error('Login link email delivery failed');
-      return reply.code(503).send({ code: 'LOGIN_LINK_DELIVERY_FAILED', message: 'Unable to send sign-in email' });
-    }
+    const error = await sendMemberLink(fastify, user, body.locale);
+    if (error) return reply.code(error.status).send({code:error.code,message:error.code});
     return generic;
+  });
+  fastify.post('/auth/login-link/resend', async (request, reply) => {
+    const {token,locale} = loginLinkSchema.pick({locale:true}).merge(consumeLoginLinkSchema).parse(request.body);
+    if (limited(request.ip)) return reply.code(429).send({code:'LOGIN_LINK_COOLDOWN'});
+    let userId: string | undefined;
+    try {
+      const proof=fastify.jwt.verify<{purpose:string;userId:string;hash:string}>(token.split('~')[1] || '');
+      if(proof.purpose==='member-link-resend' && proof.hash===createHash('sha256').update(token.split('~')[0]).digest('hex')) userId=proof.userId;
+    } catch { /* Old tokens can still resend while their digest remains stored. */ }
+    const user=await fastify.prisma.user.findUnique({where:userId?{id:userId}:{loginTokenHash:createHash('sha256').update(token.split('~')[0]).digest('hex')}});
+    if(!user || user.role!==UserRole.USER) return reply.code(400).send({code:'RESEND_EMAIL_REQUIRED'});
+    const error=await sendMemberLink(fastify,user,locale);
+    return error?reply.code(error.status).send({code:error.code}):{ok:true};
   });
   fastify.post('/auth/login-link/consume', async (request, reply) => {
     const { token } = consumeLoginLinkSchema.parse(request.body);
     if (limited(request.ip)) return reply.code(429).send({ message: 'Please try again later' });
-    const hash = createHash('sha256').update(token).digest('hex');
+    const hash = createHash('sha256').update(token.split('~')[0]).digest('hex');
     const user = await fastify.prisma.$transaction(async tx => {
       const found = await tx.user.findUnique({ where: { loginTokenHash: hash } });
       if (!found || found.role !== UserRole.USER) return null;
