@@ -26,7 +26,7 @@ test('email login is single-use, expires, excludes admins and rotates password s
       return { count: 1 };
     }
   };
-  const prisma = { user, async $transaction(callback: any) { return callback({ user }); } } as unknown as PrismaClient;
+  const prisma = { newsletterSubscriber:{findUnique:async()=>null},user, async $transaction(callback: any) { return callback({ user }); } } as unknown as PrismaClient;
   const app = Fastify(); app.decorate('prisma', prisma);
   await app.register(jwt, { secret: 'test-secret-that-is-at-least-32-characters' });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof ZodError ? 400 : 500).send({ message: error.message }));
@@ -49,7 +49,7 @@ test('email login is single-use, expires, excludes admins and rotates password s
     assert.equal(messages[0].subject, 'Votre lien de connexion Body Training Guide');
     const link = messages[0].textContent.split('\n')[0].replace('Me connecter: ', '');
     const token = new URL(link).hash.slice(1);
-    assert.equal(member.loginTokenHash, createHash('sha256').update(token).digest('hex'));
+    assert.equal(member.loginTokenHash, createHash('sha256').update(token.split('~')[0]).digest('hex'));
     assert.notEqual(member.loginTokenHash, token);
     assert.equal((await post('login-link', { email: member.email })).statusCode, 429); assert.equal(messages.length, 1, 'cooldown');
     assert.equal((await post('login-link/consume', { token: '0'.repeat(64) })).statusCode, 401);

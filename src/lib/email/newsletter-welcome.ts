@@ -7,6 +7,7 @@ type NewsletterWelcomeEmail = {
   email: string;
   language: NewsletterLanguage;
   preferencesToken: string;
+  accountUrl?: string;
 };
 
 function escapeHtml(value: string) {
@@ -28,9 +29,9 @@ export function buildNewsletterPreferencesUrl(language: NewsletterLanguage, pref
 }
 
 export function buildNewsletterWelcomePayload(input: NewsletterWelcomeEmail): BrevoTransactionalEmail {
-  const preferencesUrl = buildNewsletterPreferencesUrl(input.language, input.preferencesToken);
+  const preferencesUrl = input.accountUrl ?? buildNewsletterPreferencesUrl(input.language, input.preferencesToken);
   // The existing preferences centre owns unsubscription and calls POST /api/newsletter/unsubscribe.
-  const unsubscribeUrl = new URL(preferencesUrl);
+  const unsubscribeUrl = new URL(buildNewsletterPreferencesUrl(input.language, input.preferencesToken));
   unsubscribeUrl.searchParams.set('action', 'unsubscribe');
 
   const isFrench = input.language === 'fr';

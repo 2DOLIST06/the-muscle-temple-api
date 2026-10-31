@@ -1,6 +1,8 @@
+import { newsletterAccountRoutes } from './newsletter-account.js';
+import { publicSubscriberSelect, serializePreferences, toDatabasePreferences } from '../../lib/newsletter-preferences.js';
 import { randomBytes } from 'node:crypto';
 import { FastifyPluginAsync } from 'fastify';
-import { NewsletterFrequency, NewsletterGoalType, NewsletterStatus, Prisma } from '@prisma/client';
+import { NewsletterGoalType, NewsletterStatus } from '@prisma/client';
 import {
   newsletterPreferencesUpdateSchema,
   newsletterSubscribeSchema,
@@ -11,71 +13,8 @@ import { sendNewsletterWelcomeEmail } from '../../lib/email/newsletter-welcome.j
 
 const createToken = () => randomBytes(32).toString('base64url');
 
-const preferenceSelect = {
-  newArticles: true,
-  strengthTraining: true,
-  workoutPrograms: true,
-  nutrition: true,
-  supplements: true,
-  equipment: true,
-  tools: true,
-  guides: true,
-  frequency: true
-} as const;
-
-const publicSubscriberSelect = {
-  status: true,
-  language: true,
-  preferences: { select: preferenceSelect },
-  goals: { select: { goal: true }, orderBy: { createdAt: 'asc' as const } }
-} as const;
-
-function serializePreferences(subscriber: Prisma.NewsletterSubscriberGetPayload<{ select: typeof publicSubscriberSelect }>) {
-  const preferences = subscriber.preferences ?? {
-    newArticles: true,
-    strengthTraining: true,
-    workoutPrograms: true,
-    nutrition: true,
-    supplements: true,
-    equipment: true,
-    tools: true,
-    guides: true,
-    frequency: NewsletterFrequency.weekly
-  };
-
-  return {
-    language: subscriber.language,
-    topics: {
-      new_articles: preferences.newArticles,
-      strength_training: preferences.strengthTraining,
-      workout_programs: preferences.workoutPrograms,
-      nutrition: preferences.nutrition,
-      supplements: preferences.supplements,
-      equipment: preferences.equipment,
-      tools: preferences.tools,
-      guides: preferences.guides
-    },
-    goals: subscriber.goals.map(({ goal }) => goal),
-    frequency: preferences.frequency,
-    unsubscribed: subscriber.status === NewsletterStatus.unsubscribed
-  };
-}
-
-function toDatabasePreferences(topics: Record<string, boolean> | undefined) {
-  if (!topics) return {};
-  return {
-    ...(topics.new_articles === undefined ? {} : { newArticles: topics.new_articles }),
-    ...(topics.strength_training === undefined ? {} : { strengthTraining: topics.strength_training }),
-    ...(topics.workout_programs === undefined ? {} : { workoutPrograms: topics.workout_programs }),
-    ...(topics.nutrition === undefined ? {} : { nutrition: topics.nutrition }),
-    ...(topics.supplements === undefined ? {} : { supplements: topics.supplements }),
-    ...(topics.equipment === undefined ? {} : { equipment: topics.equipment }),
-    ...(topics.tools === undefined ? {} : { tools: topics.tools }),
-    ...(topics.guides === undefined ? {} : { guides: topics.guides })
-  };
-}
-
 export const newsletterRoutes: FastifyPluginAsync = async (fastify) => {
+  await fastify.register(newsletterAccountRoutes);
   fastify.post('/newsletter/subscribe', async (request, reply) => {
     const input = newsletterSubscribeSchema.parse(request.body);
     const now = new Date();
